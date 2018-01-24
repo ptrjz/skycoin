@@ -2,6 +2,8 @@ package coin
 
 import (
 	"bytes"
+	"errors"
+	"math"
 	"sort"
 	"testing"
 
@@ -108,6 +110,19 @@ func makeUxArray(t *testing.T, n int) UxArray {
 		uxa[i] = makeUxOut(t)
 	}
 	return uxa
+}
+
+func TestUxArrayCoins(t *testing.T) {
+	uxa := makeUxArray(t, 4)
+
+	n, err := uxa.Coins()
+	require.NoError(t, err)
+	require.Equal(t, uint64(4e6), n)
+
+	uxa[2].Body.Coins = math.MaxUint64 - 1e6
+	_, err = uxa.Coins()
+	require.Equal(t, err, errors.New("uint64 addition overflow"))
+
 }
 
 func TestUxArrayHashArray(t *testing.T) {

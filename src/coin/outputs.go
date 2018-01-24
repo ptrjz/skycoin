@@ -88,7 +88,8 @@ func (uo *UxOut) CoinHours(t uint64) uint64 {
 	seconds := (t - uo.Head.Time)                  // number of seconds
 	coinSeconds := (seconds * uo.Body.Coins) / 1e6 // coin seconds
 	coinHours := coinSeconds / 3600                // coin hours
-	return uo.Body.Hours + coinHours               // starting+earned
+	totalHours := uo.Body.Hours + coinHours        // starting+earned
+	return totalHours
 }
 
 // UxHashSet set mapping from UxHash to a placeholder value. Ignore the byte value,
@@ -160,13 +161,17 @@ func (ua UxArray) Swap(i, j int) {
 }
 
 // Coins returns the total coins
-func (ua UxArray) Coins() uint64 {
+func (ua UxArray) Coins() (uint64, error) {
 	var coins uint64
 	for _, ux := range ua {
-		coins += ux.Body.Coins
+		var err error
+		coins, err = addUint64(coins, ux.Body.Coins)
+		if err != nil {
+			return 0, err
+		}
 	}
 
-	return coins
+	return coins, nil
 }
 
 // CoinHours returns the total coin hours

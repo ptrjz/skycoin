@@ -74,11 +74,7 @@ func TransactionFee(tx *coin.Transaction, headTime uint64, inUxs coin.UxArray) (
 	}
 
 	// Compute output hours
-	outHours := uint64(0)
-	for i := range tx.Out {
-		outHours += tx.Out[i].Hours
-	}
-
+	outHours := tx.OutputHours()
 	if inHours < outHours {
 		return 0, ErrTxnInsufficientCoinHours
 	}

@@ -621,7 +621,7 @@ func TestVerifyTransaction(t *testing.T) {
 	toAddr3 := testutil.MakeAddress()
 	lostCoinTx := makeLostCoinTx(coin.UxArray{uxs2[1]}, []cipher.SecKey{genSecret}, toAddr3, 10e5)
 	err = bc.VerifyTransaction(lostCoinTx)
-	require.Equal(t, errors.New("Transactions may not create or destroy coins"), err)
+	require.Equal(t, errors.New("Transactions may not destroy coins"), err)
 }
 
 type spending struct {
