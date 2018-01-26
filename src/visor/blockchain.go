@@ -85,12 +85,17 @@ func (e ErrTransactionViolatesSoftConstraint) Error() string {
 	return fmt.Sprintf("Transaction violates soft constraint: %v", e.Err)
 }
 
-// VerifyTransactionSoftConstraints returns an error if any "soft" constraints
-// are violated.
+// VerifyTransactionSoftConstraints returns an error if any "soft" constraint are violated.
 // "soft" constaints are enforced at the network and block publication level,
 // but are not enforced at the blockchain level.
 // Clients will not accept blocks that violate hard constraints, but will
 // accept blocks that violate soft constraints.
+// Checks:
+//      * That the transaction size is not greater than the max block total transaction size
+//      * That the transaction burn enough coin hours (the fee)
+//      * That if that transaction does not spend from a locked distribution address
+//      * That the transaction does not create outputs with a higher decimal precision than is allowed
+//      * That the transaction's total output hours do not overflow uint64 (this would be a hard constraint, but is here by necessity)
 func VerifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
 	if err := verifyTransactionSoftConstraints(txn, headTime, uxIn, maxSize); err != nil {
 		return NewErrTransactionViolatesSoftConstraint(err)
@@ -132,8 +137,7 @@ func verifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxI
 	return err
 }
 
-// VerifyTransactionHardConstraints returns an error if any "hard" constraints
-// are violated.
+// VerifyTransactionHardConstraints returns an error if any "hard" constraints are violated.
 // "hard" constraints are always enforced and if violated the transaction
 // should not be included in any block and any block that includes such a transaction
 // should be rejected.
