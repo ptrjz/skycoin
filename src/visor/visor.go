@@ -391,7 +391,7 @@ func (vs *Visor) CreateBlock(when uint64) (coin.SignedBlock, error) {
 
 	logger.Info("Unconfirmed pool has %d transactions pending", len(txns))
 
-	// Filter transactions that violate soft constraints
+	// Filter transactions that violate all constraints
 	var filteredTxns coin.Transactions
 	for _, txn := range txns {
 		if err := vs.Blockchain.VerifyTransactionAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
@@ -403,7 +403,7 @@ func (vs *Visor) CreateBlock(when uint64) (coin.SignedBlock, error) {
 
 	nRemoved := len(txns) - len(filteredTxns)
 	if nRemoved > 0 {
-		logger.Info("CreateBlock ignored %d transactions violating soft constraints", nRemoved)
+		logger.Info("CreateBlock ignored %d transactions violating constraints", nRemoved)
 	}
 
 	txns = filteredTxns
@@ -1096,22 +1096,22 @@ func (vs Visor) GetBalanceOfAddrs(addrs []cipher.Address) ([]wallet.BalancePair,
 
 		coins, err := uxs.Coins()
 		if err != nil {
-			return nil, fmt.Errorf("uxs.Coins returned error: %v", err)
+			return nil, fmt.Errorf("uxs.Coins failed: %v", err)
 		}
 
 		coinHours, err := uxs.CoinHours(headTime)
 		if err != nil {
-			return nil, fmt.Errorf("uxs.CoinHours returned error: %v", err)
+			return nil, fmt.Errorf("uxs.CoinHours failed: %v", err)
 		}
 
 		pcoins, err := predictedUxs.Coins()
 		if err != nil {
-			return nil, fmt.Errorf("predictedUxs.Coins returned error: %v", err)
+			return nil, fmt.Errorf("predictedUxs.Coins failed: %v", err)
 		}
 
 		pcoinHours, err := predictedUxs.CoinHours(headTime)
 		if err != nil {
-			return nil, fmt.Errorf("predictedUxs.CoinHours returned error: %v", err)
+			return nil, fmt.Errorf("predictedUxs.CoinHours failed: %v", err)
 		}
 
 		bp := wallet.BalancePair{
