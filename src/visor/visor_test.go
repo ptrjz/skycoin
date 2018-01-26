@@ -186,7 +186,7 @@ func TestVisorCreateBlock(t *testing.T) {
 
 	nUnspents := 100
 	txn := makeUnspentsTx(t, uxs, []cipher.SecKey{genSecret}, genAddress, nUnspents, maxDropletDivisor)
-	known, err := unconfirmed.InjectTxn(bc, txn)
+	known, err := unconfirmed.InjectTransaction(bc, txn)
 	require.False(t, known)
 	require.NoError(t, err)
 
@@ -254,20 +254,20 @@ func TestVisorCreateBlock(t *testing.T) {
 
 	// Inject transactions into the unconfirmed pool
 	for _, txn := range txns {
-		known, err := unconfirmed.InjectTxn(bc, txn)
+		known, err := unconfirmed.InjectTransaction(bc, txn)
 		require.False(t, known)
 		require.NoError(t, err)
 	}
 
-	sb, err = v.CreateBlock(when + 1e6)
+	sb, err = v.CreateBlock(when + 100)
 	require.NoError(t, err)
-	require.Equal(t, when+1e6, sb.Block.Head.Time)
+	require.Equal(t, when+100, sb.Block.Head.Time)
 
 	blockTxns := sb.Block.Body.Transactions
 	require.NotEqual(t, len(txns), len(blockTxns), "Txns should be truncated")
 	require.Equal(t, 18, len(blockTxns))
 
-	// Check f ordering
+	// Check fee ordering
 	inUxs, err := v.Blockchain.Unspent().GetArray(blockTxns[0].In)
 	require.NoError(t, err)
 	prevFee, err := fee.TransactionFee(&blockTxns[0], sb.Head.Time, inUxs)
@@ -338,7 +338,7 @@ func TestVisorInjectTransaction(t *testing.T) {
 
 	// Create an transaction with valid decimal places
 	txn := makeSpendTx(t, uxs, []cipher.SecKey{genSecret}, genAddress, coins)
-	known, err := v.InjectTxn(txn)
+	known, err := v.InjectTransaction(txn)
 	require.False(t, known)
 	require.NoError(t, err)
 
@@ -355,9 +355,64 @@ func TestVisorInjectTransaction(t *testing.T) {
 
 	invalidCoins := coins + (maxDropletDivisor / 10)
 	txn = makeSpendTx(t, uxs, []cipher.SecKey{genSecret, genSecret}, toAddr, invalidCoins)
-	_, err = v.InjectTxn(txn)
-	testutil.RequireError(t, err, ErrInvalidDecimals.Error())
+	_, err = v.InjectTransaction(txn)
+	require.IsType(t, ErrTransactionViolatesSoftConstraint{}, err)
+	testutil.RequireError(t, err.(ErrTransactionViolatesSoftConstraint).Err, errInvalidDecimals.Error())
 	require.Equal(t, 0, unconfirmed.Len())
+
+	// Check transactions with overflowing output coins fail
+	txn = makeOverflowCoinsSpendTx(t, coin.UxArray{uxs[0]}, []cipher.SecKey{genSecret}, toAddr)
+	_, err = v.InjectTransaction(txn)
+	require.IsType(t, ErrTransactionViolatesHardConstraint{}, err)
+	testutil.RequireError(t, err.(ErrTransactionViolatesHardConstraint).Err, "Output coins overflow")
+
+	// Check transactions with overflowing output hours fail
+	txn = makeOverflowHoursSpendTx(t, coin.UxArray{uxs[0]}, []cipher.SecKey{genSecret}, toAddr)
+	_, err = v.InjectTransaction(txn)
+	require.IsType(t, ErrTransactionViolatesSoftConstraint{}, err)
+	testutil.RequireError(t, err.(ErrTransactionViolatesSoftConstraint).Err, "Transaction output hours overflow")
+}
+
+func makeOverflowCoinsSpendTx(t *testing.T, uxs coin.UxArray, keys []cipher.SecKey, toAddr cipher.Address) coin.Transaction {
+	spendTx := coin.Transaction{}
+	var totalHours uint64
+	var totalCoins uint64
+	for _, ux := range uxs {
+		spendTx.PushInput(ux.Hash())
+		totalHours += ux.Body.Hours
+		totalCoins += ux.Body.Coins
+	}
+
+	hours := totalHours / 12
+
+	// These two outputs' coins added up will overflow
+	spendTx.PushOutput(toAddr, 18446744073709551000, hours)
+	spendTx.PushOutput(toAddr, totalCoins, hours)
+
+	spendTx.SignInputs(keys)
+	spendTx.UpdateHeader()
+	return spendTx
+}
+
+func makeOverflowHoursSpendTx(t *testing.T, uxs coin.UxArray, keys []cipher.SecKey, toAddr cipher.Address) coin.Transaction {
+	spendTx := coin.Transaction{}
+	var totalHours uint64
+	var totalCoins uint64
+	for _, ux := range uxs {
+		spendTx.PushInput(ux.Hash())
+		totalHours += ux.Body.Hours
+		totalCoins += ux.Body.Coins
+	}
+
+	hours := totalHours / 12
+
+	// These two outputs' hours added up will overflow
+	spendTx.PushOutput(toAddr, totalCoins/2, 18446744073709551615)
+	spendTx.PushOutput(toAddr, totalCoins-totalCoins/2, hours)
+
+	spendTx.SignInputs(keys)
+	spendTx.UpdateHeader()
+	return spendTx
 }
 
 func TestVisorCalculatePrecision(t *testing.T) {
@@ -1550,7 +1605,7 @@ func TestGetTransctions(t *testing.T) {
 
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
-			his := NewHistoryerMock2()
+			his := newHistoryerMock2()
 			uncfmTxPool := NewUnconfirmedTxnPoolerMock2()
 			for addr, txs := range tc.addrTxns {
 				his.On("GetAddrTxns", addr).Return(txs.Txs, nil)
@@ -1618,7 +1673,7 @@ type historyerMock2 struct {
 	txs []historydb.Transaction
 }
 
-func NewHistoryerMock2() *historyerMock2 {
+func newHistoryerMock2() *historyerMock2 {
 	return &historyerMock2{}
 }
 

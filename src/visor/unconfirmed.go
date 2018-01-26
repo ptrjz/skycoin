@@ -9,7 +9,6 @@ import (
 	"github.com/skycoin/skycoin/src/cipher"
 	"github.com/skycoin/skycoin/src/cipher/encoder"
 	"github.com/skycoin/skycoin/src/coin"
-	"github.com/skycoin/skycoin/src/util/fee"
 	"github.com/skycoin/skycoin/src/util/utc"
 	"github.com/skycoin/skycoin/src/visor/blockdb"
 	"github.com/skycoin/skycoin/src/visor/bucket"
@@ -272,20 +271,13 @@ func (utp *UnconfirmedTxnPool) createUnconfirmedTxn(t coin.Transaction) Unconfir
 	}
 }
 
-// InjectTxn adds a coin.Transaction to the pool, or updates an existing one's timestamps
+// InjectTransaction adds a coin.Transaction to the pool, or updates an existing one's timestamps
 // Returns an error if txn is invalid, and whether the transaction already
 // existed in the pool.
-func (utp *UnconfirmedTxnPool) InjectTxn(bc Blockchainer, t coin.Transaction) (bool, error) {
-	f, err := bc.TransactionFee(&t)
-	if err != nil {
-		return false, err
-	}
-
-	if err := fee.VerifyTransactionFee(&t, f); err != nil {
-		return false, err
-	}
-
-	if err := bc.VerifyTransaction(t); err != nil {
+func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transaction) (bool, error) {
+	// NOTE: Only hard constraints are checked here,
+	//       but if it violates soft constraints it should not be propagated
+	if err := bc.VerifyTransactionHardConstraints(t); err != nil {
 		return false, err
 	}
 
@@ -374,12 +366,12 @@ func (utp *UnconfirmedTxnPool) RemoveTransactionsWithTx(tx *bolt.Tx, txns []ciph
 
 // Refresh checks all unconfirmed txns against the blockchain.
 // verify the transaction and returns all those txns that turn to valid.
-func (utp *UnconfirmedTxnPool) Refresh(bc Blockchainer) (hashes []cipher.SHA256) {
+func (utp *UnconfirmedTxnPool) Refresh(bc Blockchainer, maxBlockSize int) (hashes []cipher.SHA256) {
 	now := utc.Now()
 	utp.txns.rangeUpdate(func(key cipher.SHA256, tx *UnconfirmedTxn) {
 		tx.Checked = now.UnixNano()
 		if tx.IsValid == 0 {
-			if bc.VerifyTransaction(tx.Txn) == nil {
+			if bc.VerifyTransactionAllConstraints(tx.Txn, maxBlockSize) == nil {
 				tx.IsValid = 1
 				hashes = append(hashes, tx.Hash())
 			}

@@ -3,6 +3,7 @@ package visor
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/boltdb/bolt"
@@ -45,6 +46,160 @@ const (
 // transactions (TX) consume outputs (UX) and produce new outputs (UX)
 // Tx.Uxi() - set of outputs consumed by transaction
 // Tx.Uxo() - set of outputs created by transaction
+
+// ErrTransactionViolatesHardConstraint is returned when a transaction violates hard constraints
+type ErrTransactionViolatesHardConstraint struct {
+	Err error
+}
+
+// NewErrTransactionViolatesHardConstraint creates ErrTransactionViolatesHardConstraint
+func NewErrTransactionViolatesHardConstraint(err error) error {
+	if err == nil {
+		return nil
+	}
+	return ErrTransactionViolatesHardConstraint{
+		Err: err,
+	}
+}
+
+func (e ErrTransactionViolatesHardConstraint) Error() string {
+	return fmt.Sprintf("Transaction violates hard constraint: %v", e.Err)
+}
+
+// ErrTransactionViolatesSoftConstraint is returned when a transaction violates soft constraints
+type ErrTransactionViolatesSoftConstraint struct {
+	Err error
+}
+
+// NewErrTransactionViolatesSoftConstraint creates ErrTransactionViolatesSoftConstraint
+func NewErrTransactionViolatesSoftConstraint(err error) error {
+	if err == nil {
+		return nil
+	}
+	return ErrTransactionViolatesSoftConstraint{
+		Err: err,
+	}
+}
+
+func (e ErrTransactionViolatesSoftConstraint) Error() string {
+	return fmt.Sprintf("Transaction violates soft constraint: %v", e.Err)
+}
+
+// VerifyTransactionSoftConstraints returns an error if any "soft" constraints
+// are violated.
+// "soft" constaints are enforced at the network and block publication level,
+// but are not enforced at the blockchain level.
+// Clients will not accept blocks that violate hard constraints, but will
+// accept blocks that violate soft constraints.
+func VerifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
+	if err := verifyTransactionSoftConstraints(txn, headTime, uxIn, maxSize); err != nil {
+		return NewErrTransactionViolatesSoftConstraint(err)
+	}
+	return nil
+}
+
+func verifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
+	if txn.Size() > maxSize {
+		return errors.New("Transaction size bigger than max block size")
+	}
+
+	f, err := fee.TransactionFee(&txn, headTime, uxIn)
+	if err != nil {
+		return err
+	}
+
+	if err := fee.VerifyTransactionFee(&txn, f); err != nil {
+		return err
+	}
+
+	if TransactionIsLocked(uxIn) {
+		return errors.New("Transaction has locked address inputs")
+	}
+
+	// Reject transactions that do not conform to decimal restrictions
+	for _, o := range txn.Out {
+		if err := DropletPrecisionCheck(o.Coins); err != nil {
+			return err
+		}
+	}
+
+	// Verify CoinHours do not overflow
+	// NOTE: This would be in the hard constraints, but a bug caused overflowing
+	// coinhour transactions to be published. To avoid breaking the blockchain
+	// sync, the rules are applied here.
+	// If/when the blockchain is upgraded/reset, move this to the hard constraints.
+	_, err = txn.OutputHours()
+	return err
+}
+
+// VerifyTransactionHardConstraints returns an error if any "hard" constraints
+// are violated.
+// "hard" constraints are always enforced and if violated the transaction
+// should not be included in any block and any block that includes such a transaction
+// should be rejected.
+// Checks:
+//      * That the inputs to the transaction exist
+//      * That the transaction does not create or destroy coins
+//      * That the signatures on the transaction are valid
+//      * That there are no duplicate ux inputs
+//      * That there are no duplicate outputs
+func VerifyTransactionHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := verifyTransactionHardConstraints(txn, head, uxIn); err != nil {
+		return NewErrTransactionViolatesHardConstraint(err)
+	}
+	return nil
+}
+
+func verifyTransactionHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	//CHECKLIST: DONE: check for duplicate ux inputs/double spending
+	//CHECKLIST: DONE: check that inputs of transaction have not been spent
+	//CHECKLIST: DONE: check there are no duplicate outputs
+
+	// Q: why are coin hours based on last block time and not
+	// current time?
+	// A: no two computers will agree on system time. Need system clock
+	// indepedent timing that everyone agrees on. fee values would depend on
+	// local clock
+
+	// Check transaction type and length
+	// Check for duplicate outputs
+	// Check for duplicate inputs
+	// Check for invalid hash
+	// Check for no inputs
+	// Check for no outputs
+	// Check for zero coin outputs
+	// Check valid looking signatures
+
+	if err := txn.Verify(); err != nil {
+		return err
+	}
+
+	// Checks whether ux inputs exist,
+	// Check that signatures are allowed to spend inputs
+	if err := txn.VerifyInput(uxIn); err != nil {
+		return err
+	}
+
+	uxOut := coin.CreateUnspents(head.Head, txn)
+
+	// Check that there are any duplicates within this set
+	// NOTE: This should already be checked by txn.Verify()
+	if uxOut.HasDupes() {
+		return errors.New("Duplicate output in transaction")
+	}
+
+	// Check that no coins are created or destroyed
+	if err := coin.VerifyTransactionCoinsSpending(uxIn, uxOut); err != nil {
+		return err
+	}
+
+	// Check that no hours are created
+	// NOTE: this check doesn't catch overflow errors in the addition of hours
+	// Some blocks had their hours overflow, and if this rule was checked here,
+	// existing blocks would invalidate.
+	// The hours overflow check is handled in the soft constraints for now.
+	return coin.VerifyTransactionHoursSpending(head.Time(), uxIn, uxOut)
+}
 
 // chainStore
 type chainStore interface {
@@ -266,67 +421,61 @@ func (bc Blockchain) verifyUxHash(b coin.Block) error {
 	return nil
 }
 
-// VerifyTransaction checks that the inputs to the transaction exist,
-// that the transaction does not create or destroy coins and that the
-// signatures on the transaction are valid
-func (bc Blockchain) VerifyTransaction(tx coin.Transaction) error {
-	//CHECKLIST: DONE: check for duplicate ux inputs/double spending
-	//CHECKLIST: DONE: check that inputs of transaction have not been spent
-	//CHECKLIST: DONE: check there are no duplicate outputs
-
-	// Q: why are coin hours based on last block time and not
-	// current time?
-	// A: no two computers will agree on system time. Need system clock
-	// indepedent timing that everyone agrees on. fee values would depend on
-	// local clock
-
-	// Check transaction type and length
-	// Check for duplicate outputs
-	// Check for duplicate inputs
-	// Check for invalid hash
-	// Check for no inputs
-	// Check for no outputs
-	// Check for zero coin outputs
-	// Check valid looking signatures
-	if err := tx.Verify(); err != nil {
-		return err
-	}
-
+// VerifyTransactionHardConstraints checks that the transaction does not violate hard constraints
+func (bc Blockchain) VerifyTransactionHardConstraints(tx coin.Transaction) error {
 	uxIn, err := bc.Unspent().GetArray(tx.In)
 	if err != nil {
 		return err
 	}
-	// Checks whether ux inputs exist,
-	// Check that signatures are allowed to spend inputs
-	if err := tx.VerifyInput(uxIn); err != nil {
-		return err
-	}
 
-	// Get the UxOuts we expect to have when the block is created.
 	head, err := bc.Head()
 	if err != nil {
 		return err
 	}
-	uxOut := coin.CreateUnspents(head.Head, tx)
-	// Check that there are any duplicates within this set
-	if uxOut.HasDupes() {
-		return errors.New("Duplicate unspent outputs in transaction")
+
+	return bc.verifyTransactionHardConstraints(tx, head, uxIn)
+}
+
+// VerifyTransactionAllConstraints checks that the transaction does not violate soft or hard constraints
+func (bc Blockchain) VerifyTransactionAllConstraints(tx coin.Transaction, maxSize int) error {
+	uxIn, err := bc.Unspent().GetArray(tx.In)
+	if err != nil {
+		return err
 	}
+
+	head, err := bc.Head()
+	if err != nil {
+		return err
+	}
+
+	if err := bc.verifyTransactionHardConstraints(tx, head, uxIn); err != nil {
+		return err
+	}
+
+	return VerifyTransactionSoftConstraints(tx, head.Time(), uxIn, maxSize)
+}
+
+func (bc Blockchain) verifyTransactionHardConstraints(tx coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := VerifyTransactionHardConstraints(tx, head, uxIn); err != nil {
+		return err
+	}
+
 	if DebugLevel1 {
 		// Check that new unspents don't collide with existing.  This should
 		// also be checked in verifyTransactions
+		// NOTE: this is not in the top-level VerifyTransactionHardConstraints
+		// because it relies on the unspent pool to check for existence.
+		// For remote callers such as the CLI, they'd need to download the whole
+		// unspent pool or make a separate API call to check for duplicate unspents.
+		uxOut := coin.CreateUnspents(head.Head, tx)
 		for i := range uxOut {
 			if bc.Unspent().Contains(uxOut[i].Hash()) {
-				return errors.New("New unspent collides with existing unspent")
+				err := errors.New("New unspent collides with existing unspent")
+				return NewErrTransactionViolatesHardConstraint(err)
 			}
 		}
 	}
 
-	// Check that no coins are lost, and sufficient coins and hours are spent
-	err = coin.VerifyTransactionSpending(bc.Time(), uxIn, uxOut)
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -403,7 +552,7 @@ func (bc Blockchain) processTransactions(txs coin.Transactions) (coin.Transactio
 	for i, tx := range txns {
 		// Check the transaction against itself.  This covers the hash,
 		// signature indices and duplicate spends within itself
-		err := bc.VerifyTransaction(tx)
+		err := bc.VerifyTransactionHardConstraints(tx)
 		if err != nil {
 			if bc.arbitrating {
 				skip[i] = struct{}{}
@@ -465,7 +614,7 @@ func (bc Blockchain) processTransactions(txs coin.Transactions) (coin.Transactio
 
 	// Check to ensure that there are no duplicate spends in the entire block,
 	// and that we aren't creating duplicate outputs.  Duplicate outputs
-	// within a single Transaction are already checked by VerifyTransaction
+	// within a single Transaction are already checked by VerifyTransactionHardConstraints
 	hashes := txns.Hashes()
 	for i := 0; i < len(txns)-1; i++ {
 		s := txns[i]

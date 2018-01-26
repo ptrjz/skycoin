@@ -30,11 +30,16 @@ func NewBalance(coins, hours uint64) Balance {
 }
 
 // NewBalanceFromUxOut creates Balance from UxOut
-func NewBalanceFromUxOut(headTime uint64, ux *coin.UxOut) Balance {
+func NewBalanceFromUxOut(headTime uint64, ux *coin.UxOut) (Balance, error) {
+	hours, err := ux.CoinHours(headTime)
+	if err != nil {
+		return Balance{}, err
+	}
+
 	return Balance{
 		Coins: ux.Body.Coins,
-		Hours: ux.CoinHours(headTime),
-	}
+		Hours: hours,
+	}, nil
 }
 
 // Add Deprecate

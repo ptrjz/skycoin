@@ -88,20 +88,47 @@ func TestUxOutCoinHours(t *testing.T) {
 	uxo := makeUxOut(t)
 	// No hours passed
 	now := uint64(200)
-	assert.Equal(t, uxo.CoinHours(now), uxo.Body.Hours)
+	hours, err := uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours)
+
 	now = uint64(3600) + uxo.Head.Time
-	assert.Equal(t, uxo.CoinHours(now), uxo.Body.Hours+(uxo.Body.Coins/1e6))
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours+(uxo.Body.Coins/1e6))
+
 	now = uint64(3600*6) + uxo.Head.Time
-	assert.Equal(t, uxo.CoinHours(now), uxo.Body.Hours+(uxo.Body.Coins/1e6)*6)
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours+(uxo.Body.Coins/1e6)*6)
+
 	now = uxo.Head.Time / 2
-	assert.Equal(t, uxo.CoinHours(now), uxo.Body.Hours)
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours)
+
 	uxo.Body.Coins = _genCoins
 	uxo.Body.Hours = _genCoinHours
-	assert.Equal(t, uxo.CoinHours(uxo.Head.Time), uxo.Body.Hours)
-	assert.Equal(t, uxo.CoinHours(uxo.Head.Time+3600),
-		uxo.Body.Hours+(_genCoins/1e6))
+	hours, err = uxo.CoinHours(uxo.Head.Time)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours)
+
+	hours, err = uxo.CoinHours(uxo.Head.Time + 3600)
+	require.NoError(t, err)
+	require.Equal(t, hours, uxo.Body.Hours+(_genCoins/1e6))
+
 	uxo.Body.Hours = 0
-	assert.Equal(t, uxo.CoinHours(uxo.Head.Time), uint64(0))
+	hours, err = uxo.CoinHours(uxo.Head.Time)
+	require.NoError(t, err)
+	require.Equal(t, hours, uint64(0))
+
+	_, err = uxo.CoinHours(100000000000000)
+	testutil.RequireError(t, err, "uint64 multiplication overflow")
+
+	uxo.Body.Coins = 3600e6
+	uxo.Body.Hours = math.MaxUint64 - 1
+	_, err = uxo.CoinHours(uxo.Head.Time + 1000)
+	testutil.RequireError(t, err, "UxOut.CoinsHours addition overflow")
 }
 
 func makeUxArray(t *testing.T, n int) UxArray {
@@ -121,8 +148,22 @@ func TestUxArrayCoins(t *testing.T) {
 
 	uxa[2].Body.Coins = math.MaxUint64 - 1e6
 	_, err = uxa.Coins()
-	require.Equal(t, err, errors.New("uint64 addition overflow"))
+	require.Equal(t, err, errors.New("UxArray.Coins addition overflow"))
+}
 
+func TestUxArrayCoinHours(t *testing.T) {
+	uxa := makeUxArray(t, 4)
+
+	n, err := uxa.CoinHours(uxa[0].Head.Time)
+	require.NoError(t, err)
+	require.Equal(t, uint64(400), n)
+
+	uxa[2].Body.Hours = math.MaxUint64 - 100
+	_, err = uxa.CoinHours(uxa[0].Head.Time)
+	require.Equal(t, err, errors.New("UxArray.CoinHours addition overflow"))
+
+	_, err = uxa.CoinHours(uxa[0].Head.Time * 1000000000000)
+	require.Equal(t, err, errors.New("uint64 multiplication overflow"))
 }
 
 func TestUxArrayHashArray(t *testing.T) {
@@ -194,14 +235,12 @@ func TestUxArraySorting(t *testing.T) {
 	}
 	isSorted := manualUxArrayIsSorted(uxa)
 	assert.Equal(t, sort.IsSorted(uxa), isSorted)
-	assert.Equal(t, uxa.IsSorted(), isSorted)
 	// Make sure uxa is not sorted
 	if isSorted {
 		uxa[0], uxa[1] = uxa[1], uxa[0]
 	}
 	assert.False(t, manualUxArrayIsSorted(uxa))
 	assert.False(t, sort.IsSorted(uxa))
-	assert.False(t, uxa.IsSorted())
 	uxb := make(UxArray, 4)
 	for i, ux := range uxa {
 		uxb[i] = ux
@@ -209,13 +248,11 @@ func TestUxArraySorting(t *testing.T) {
 	sort.Sort(uxa)
 	assert.True(t, sort.IsSorted(uxa))
 	assert.True(t, manualUxArrayIsSorted(uxa))
-	assert.True(t, uxa.IsSorted())
 	assert.False(t, sort.IsSorted(uxb))
 	uxb.Sort()
 	assert.Equal(t, uxa, uxb)
 	assert.True(t, sort.IsSorted(uxb))
 	assert.True(t, manualUxArrayIsSorted(uxb))
-	assert.True(t, uxb.IsSorted())
 }
 
 func TestUxArrayLen(t *testing.T) {

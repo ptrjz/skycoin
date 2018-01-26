@@ -11,7 +11,6 @@ import (
 	"github.com/skycoin/skycoin/src/coin"
 	"github.com/skycoin/skycoin/src/daemon/gnet"
 	"github.com/skycoin/skycoin/src/daemon/strand"
-	"github.com/skycoin/skycoin/src/util/fee"
 	"github.com/skycoin/skycoin/src/util/utc"
 	"github.com/skycoin/skycoin/src/visor"
 	"github.com/skycoin/skycoin/src/wallet"
@@ -104,6 +103,10 @@ func (vs *Visor) Run() error {
 		errC <- vs.v.Run()
 	}()
 
+	return vs.processRequests(errC)
+}
+
+func (vs *Visor) processRequests(errC <-chan error) error {
 	for {
 		select {
 		case err := <-errC:
@@ -286,16 +289,27 @@ func (vs *Visor) SetTxnsAnnounced(txns []cipher.SHA256) {
 	})
 }
 
-// InjectTransaction injects transaction to the unconfirmed pool and broadcasts it
+// InjectBroadcastTransaction injects transaction to the unconfirmed pool and broadcasts it
 // The transaction must have a valid fee, be well-formed and not spend timelocked outputs.
-func (vs *Visor) InjectTransaction(txn coin.Transaction, pool *Pool) error {
-	return vs.strand("InjectTransaction", func() error {
-		if err := vs.injectTransaction(txn, pool); err != nil {
+func (vs *Visor) InjectBroadcastTransaction(txn coin.Transaction, pool *Pool) error {
+	return vs.strand("InjectBroadcastTransaction", func() error {
+		if _, err := vs.v.InjectTransaction(txn); err != nil {
 			return err
 		}
 
 		return vs.broadcastTransaction(txn, pool)
 	})
+}
+
+// InjectTransaction only try to append transaction into local blockchain, don't broadcast it.
+func (vs *Visor) InjectTransaction(tx coin.Transaction) (bool, error) {
+	var known bool
+	err := vs.strand("InjectTransaction", func() error {
+		var err error
+		known, err = vs.v.InjectTransaction(tx)
+		return err
+	})
+	return known, err
 }
 
 // Sends a signed block to all connections.
@@ -329,48 +343,6 @@ func (vs *Visor) broadcastTransaction(t coin.Transaction, pool *Pool) error {
 	}
 
 	return err
-}
-
-func (vs *Visor) injectTransaction(txn coin.Transaction, pool *Pool) error {
-	if err := vs.verifyTransaction(txn); err != nil {
-		return err
-	}
-
-	_, err := vs.v.InjectTxn(txn)
-	return err
-}
-
-func (vs *Visor) verifyTransaction(txn coin.Transaction) error {
-	inUxs, err := vs.v.Blockchain.Unspent().GetArray(txn.In)
-	if err != nil {
-		return err
-	}
-
-	f, err := fee.TransactionFee(&txn, vs.v.Blockchain.Time(), inUxs)
-	if err != nil {
-		return err
-	}
-
-	if err := fee.VerifyTransactionFee(&txn, f); err != nil {
-		return err
-	}
-
-	if visor.TransactionIsLocked(inUxs) {
-		return errors.New("Transaction has locked address inputs")
-	}
-
-	if err := txn.Verify(); err != nil {
-		return fmt.Errorf("Transaction Verification Failed, %v", err)
-	}
-
-	// valid the spending coins
-	for _, out := range txn.Out {
-		if err := visor.DropletPrecisionCheck(out.Coins); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // ResendTransaction resends a known UnconfirmedTxn.
@@ -555,17 +527,6 @@ func (vs *Visor) UnConfirmKnow(hashes []cipher.SHA256) coin.Transactions {
 		return nil
 	})
 	return txns
-}
-
-// InjectTxn only try to append transaction into local blockchain, don't broadcast it.
-func (vs *Visor) InjectTxn(tx coin.Transaction) (bool, error) {
-	var known bool
-	err := vs.strand("InjectTxn", func() error {
-		var err error
-		known, err = vs.v.InjectTxn(tx)
-		return err
-	})
-	return known, err
 }
 
 // Communication layer for the coin pkg
@@ -843,7 +804,7 @@ func (gtm *GiveTxnsMessage) Process(d *Daemon) {
 	// Update unconfirmed pool with these transactions
 	for _, txn := range gtm.Txns {
 		// Only announce transactions that are new to us, so that peers can't spam relays
-		known, err := d.Visor.InjectTxn(txn)
+		known, err := d.Visor.InjectTransaction(txn)
 		if err != nil {
 			logger.Warning("Failed to record transaction %s: %v", txn.Hash().Hex(), err)
 			continue

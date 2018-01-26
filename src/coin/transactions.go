@@ -133,7 +133,7 @@ func (txn *Transaction) Verify() error {
 	coins := uint64(0)
 	for _, to := range txn.Out {
 		var err error
-		coins, err = addUint64(coins, to.Coins)
+		coins, err = AddUint64(coins, to.Coins)
 		if err != nil {
 			return errors.New("Output coins overflow")
 		}
@@ -145,33 +145,28 @@ func (txn *Transaction) Verify() error {
 // VerifyInput verifies the input
 func (txn Transaction) VerifyInput(uxIn UxArray) error {
 	if DebugLevel2 {
-		if len(txn.In) != len(txn.Sigs) || len(txn.In) != len(uxIn) {
-			logger.Panic("tx.In != tx.Sigs != uxIn")
+		if len(txn.In) != len(uxIn) {
+			logger.Panic("tx.In != uxIn")
+		}
+		if len(txn.In) != len(txn.Sigs) {
+			logger.Panic("tx.In != tx.Sigs")
 		}
 		if txn.InnerHash != txn.HashInner() {
-			logger.Panic("Invalid Tx Header Hash")
+			logger.Panic("Invalid Tx Inner Hash")
+		}
+		for i := range txn.In {
+			if txn.In[i] != uxIn[i].Hash() {
+				logger.Panic("Ux hash mismatch")
+			}
 		}
 	}
 
 	// Check signatures against unspent address
 	for i := range txn.In {
-		hash := cipher.AddSHA256(txn.InnerHash, txn.In[i]) //use inner hash, not outer hash
+		hash := cipher.AddSHA256(txn.InnerHash, txn.In[i]) // use inner hash, not outer hash
 		err := cipher.ChkSig(uxIn[i].Body.Address, hash, txn.Sigs[i])
 		if err != nil {
 			return errors.New("Signature not valid for output being spent")
-		}
-	}
-
-	if DebugLevel2 {
-		// Check that hashes match.
-		// This would imply a bug with UnspentPool.GetMultiple
-		if len(txn.In) != len(uxIn) {
-			logger.Panic("tx.In does not match uxIn")
-		}
-		for i := range txn.In {
-			if txn.In[i] != uxIn[i].Hash() {
-				logger.Panic("impossible error: Ux hash mismatch")
-			}
 		}
 	}
 
@@ -304,12 +299,16 @@ func TransactionDeserialize(b []byte) (Transaction, error) {
 }
 
 // OutputHours returns the coin hours sent as outputs. This does not include the fee.
-func (txn *Transaction) OutputHours() uint64 {
+func (txn *Transaction) OutputHours() (uint64, error) {
 	hours := uint64(0)
 	for i := range txn.Out {
-		hours += txn.Out[i].Hours
+		var err error
+		hours, err = AddUint64(hours, txn.Out[i].Hours)
+		if err != nil {
+			return 0, errors.New("Transaction output hours overflow")
+		}
 	}
-	return hours
+	return hours, nil
 }
 
 // Transactions transaction slice
@@ -323,7 +322,11 @@ func (txns Transactions) Fees(calc FeeCalculator) (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += fee
+
+		total, err = AddUint64(total, fee)
+		if err != nil {
+			return 0, errors.New("Transactions fee totals overflow")
+		}
 	}
 	return total, nil
 }
@@ -392,16 +395,22 @@ func NewSortableTransactions(txns Transactions, feeCalc FeeCalculator) SortableT
 	j := 0
 	for i := range txns {
 		fee, err := feeCalc(&txns[i])
-		if err == nil {
-			newTxns[j] = txns[i]
-
-			size := 0
-			size, hashes[j] = txns[i].SizeHash()
-
-			// Calculate fee priority based on fee per kb
-			fees[j] = (fee * 1024) / uint64(size)
-			j++
+		if err != nil {
+			continue
 		}
+
+		size, hash := txns[i].SizeHash()
+
+		// Calculate fee priority based on fee per kb
+		feeKB, err := multUint64(fee, 1024)
+		if err != nil {
+			continue
+		}
+
+		newTxns[j] = txns[i]
+		hashes[j] = hash
+		fees[j] = feeKB / uint64(size)
+		j++
 	}
 	return SortableTransactions{
 		Txns:   newTxns[:j],
@@ -413,11 +422,6 @@ func NewSortableTransactions(txns Transactions, feeCalc FeeCalculator) SortableT
 // Sort sorts by tx fee, and then by hash if fee equal
 func (txns SortableTransactions) Sort() {
 	sort.Sort(txns)
-}
-
-// IsSorted checks if transactions are sorted
-func (txns SortableTransactions) IsSorted() bool {
-	return sort.IsSorted(txns)
 }
 
 // Len returns length of transactions
@@ -442,31 +446,24 @@ func (txns SortableTransactions) Swap(i, j int) {
 	txns.Hashes[i], txns.Hashes[j] = txns.Hashes[j], txns.Hashes[i]
 }
 
-// VerifyTransactionSpending checks that coins will not be destroyed and that enough coins are hours
-// are being spent for the outputs
-func VerifyTransactionSpending(headTime uint64, uxIn UxArray, uxOut UxArray) error {
+// VerifyTransactionCoinsSpending checks that coins are not destroyed or created by the transaction
+func VerifyTransactionCoinsSpending(uxIn UxArray, uxOut UxArray) error {
 	coinsIn := uint64(0)
-	hoursIn := uint64(0)
 	for i := range uxIn {
 		var err error
-		coinsIn, err = addUint64(coinsIn, uxIn[i].Body.Coins)
+		coinsIn, err = AddUint64(coinsIn, uxIn[i].Body.Coins)
 		if err != nil {
 			return errors.New("Transaction input coins overflow")
 		}
-
-		hoursIn += uxIn[i].CoinHours(headTime)
 	}
 
 	coinsOut := uint64(0)
-	hoursOut := uint64(0)
 	for i := range uxOut {
 		var err error
-		coinsOut, err = addUint64(coinsOut, uxOut[i].Body.Coins)
+		coinsOut, err = AddUint64(coinsOut, uxOut[i].Body.Coins)
 		if err != nil {
 			return errors.New("Transaction output coins overflow")
 		}
-
-		hoursOut += uxOut[i].Body.Hours
 	}
 
 	if coinsIn < coinsOut {
@@ -475,6 +472,34 @@ func VerifyTransactionSpending(headTime uint64, uxIn UxArray, uxOut UxArray) err
 	if coinsIn > coinsOut {
 		return errors.New("Transactions may not destroy coins")
 	}
+
+	return nil
+}
+
+// VerifyTransactionHoursSpending checks that hours are not created by the transaction
+func VerifyTransactionHoursSpending(headTime uint64, uxIn UxArray, uxOut UxArray) error {
+	hoursIn := uint64(0)
+	for i := range uxIn {
+		uxHours, err := uxIn[i].CoinHours(headTime)
+		if err != nil {
+			return err
+		}
+
+		hoursIn, err = AddUint64(hoursIn, uxHours)
+		if err != nil {
+			return errors.New("Transaction input hours overflow")
+		}
+	}
+
+	hoursOut := uint64(0)
+	for i := range uxOut {
+		// NOTE: addition of hours is not checked for overflow here because
+		// this would invalidate existing blocks which had overflowed hours.
+		// Hours overflow checks are handled as a "soft" constraint in the network
+		// until those blocks are repaired.
+		hoursOut += uxOut[i].Body.Hours
+	}
+
 	if hoursIn < hoursOut {
 		return errors.New("Insufficient coin hours")
 	}
@@ -489,7 +514,8 @@ func multUint64(a, b uint64) (uint64, error) {
 	return c, nil
 }
 
-func addUint64(a, b uint64) (uint64, error) {
+// AddUint64 adds a and b, returning an error if the values would overflow
+func AddUint64(a, b uint64) (uint64, error) {
 	c := a + b
 	if c < a || c < b {
 		return 0, errors.New("uint64 addition overflow")

@@ -13,7 +13,6 @@ import (
 	time "time"
 
 	bolt "github.com/boltdb/bolt"
-
 	cipher "github.com/skycoin/skycoin/src/cipher"
 	coin "github.com/skycoin/skycoin/src/coin"
 	blockdb "github.com/skycoin/skycoin/src/visor/blockdb"
@@ -299,9 +298,9 @@ func (m *UnconfirmedTxnPoolerMock) RecvOfAddresses(p0 coin.BlockHeader, p1 []cip
 }
 
 // Refresh mocked method
-func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer) []cipher.SHA256 {
+func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer, p1 int) []cipher.SHA256 {
 
-	ret := m.Called(p0)
+	ret := m.Called(p0, p1)
 
 	var r0 []cipher.SHA256
 	switch res := ret.Get(0).(type) {
@@ -357,6 +356,33 @@ func (m *UnconfirmedTxnPoolerMock) SpendsOfAddresses(p0 []cipher.Address, p1 blo
 	switch res := ret.Get(0).(type) {
 	case nil:
 	case coin.AddressUxOuts:
+		r0 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	var r1 error
+	switch res := ret.Get(1).(type) {
+	case nil:
+	case error:
+		r1 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0, r1
+
+}
+
+// InjectTransaction mocked method
+func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Transaction) (bool, error) {
+
+	ret := m.Called(p0, p1)
+
+	var r0 bool
+	switch res := ret.Get(0).(type) {
+	case nil:
+	case bool:
 		r0 = res
 	default:
 		panic(fmt.Sprintf("unexpected type: %v", res))
