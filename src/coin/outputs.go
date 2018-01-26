@@ -3,6 +3,7 @@ package coin
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/skycoin/skycoin/src/cipher"
@@ -88,12 +89,23 @@ func (uo *UxOut) CoinHours(t uint64) (uint64, error) {
 
 	seconds := t - uo.Head.Time // number of seconds
 
-	dropletSeconds, err := multUint64(seconds, uo.Body.Coins)
+	// Calculate whole coin seconds
+	wholeCoins := uo.Body.Coins / 1e6
+	wholeCoinSeconds, err := multUint64(seconds, wholeCoins)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("Calculating whole coin seconds overflows uint64 seconds=%d coins=%d", seconds, wholeCoins)
 	}
 
-	coinSeconds := dropletSeconds / 1e6                    // coin seconds
+	// Calculate remainder droplet seconds
+	remainderDroplets := uo.Body.Coins % 1e6
+	dropletSeconds, err := multUint64(seconds, remainderDroplets)
+	if err != nil {
+		return 0, fmt.Errorf("Calculating droplet seconds overflows uint64 seconds=%d droplets=%d", seconds, remainderDroplets)
+	}
+
+	// Add coinSeconds and seconds earned by droplets, rounded off
+	coinSeconds := wholeCoinSeconds + dropletSeconds/1e6
+
 	coinHours := coinSeconds / 3600                        // coin hours
 	totalHours, err := AddUint64(uo.Body.Hours, coinHours) // starting+earned
 	if err != nil {

@@ -290,6 +290,7 @@ func (bc *Blockchain) processBlockWithTx(tx *bolt.Tx, b coin.SignedBlock) (coin.
 			if err := bc.verifyBlockHeader(b.Block); err != nil {
 				return coin.SignedBlock{}, err
 			}
+
 			txns, err := bc.processTransactions(b.Body.Transactions)
 			if err != nil {
 				return coin.SignedBlock{}, err

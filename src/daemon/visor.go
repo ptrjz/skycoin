@@ -625,7 +625,7 @@ func (gbm *GiveBlocksMessage) Process(d *Daemon) {
 			logger.Critical("Added new block %d", b.Block.Head.BkSeq)
 			processed++
 		} else {
-			logger.Critical("Failed to execute received block: %v", err)
+			logger.Critical("Failed to execute received block %d: %v", b.Block.Head.BkSeq, err)
 			// Blocks must be received in order, so if one fails its assumed
 			// the rest are failing
 			break

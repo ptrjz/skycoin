@@ -86,45 +86,104 @@ func TestUxOutSnapshotHash(t *testing.T) {
 
 func TestUxOutCoinHours(t *testing.T) {
 	uxo := makeUxOut(t)
-	// No hours passed
-	now := uint64(200)
+
+	// Less than 1 hour passed
+	now := uint64(100) + uxo.Head.Time
 	hours, err := uxo.CoinHours(now)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours)
 
+	// 1 hours passed
 	now = uint64(3600) + uxo.Head.Time
 	hours, err = uxo.CoinHours(now)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours+(uxo.Body.Coins/1e6))
 
+	// 6 hours passed
 	now = uint64(3600*6) + uxo.Head.Time
 	hours, err = uxo.CoinHours(now)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours+(uxo.Body.Coins/1e6)*6)
 
+	// Time is backwards (treated as no hours passed)
 	now = uxo.Head.Time / 2
 	hours, err = uxo.CoinHours(now)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours)
 
+	// 1 hour has passed, output has 1.5 coins, should gain 1 coinhour
+	uxo.Body.Coins = 1e6 + 5e5
+	now = uint64(3600) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours+1, hours)
+
+	// 2 hours have passed, output has 1.5 coins, should gain 3 coin hours
+	uxo.Body.Coins = 1e6 + 5e5
+	now = uint64(3600*2) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours+3, hours, "%d != %d", uxo.Body.Hours+3, hours)
+
+	// 1 second has passed, output has 3600 coins, should gain 1 coin hour
+	uxo.Body.Coins = 3600e6
+	now = uint64(1) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours+1, hours)
+
+	// 1000000 hours minus 1 second have passed, output has 1 droplet, should gain 0 coin hour
+	uxo.Body.Coins = 1
+	now = uint64(1000000*3600-1) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours, hours)
+
+	// 1000000 hours have passed, output has 1 droplet, should gain 1 coin hour
+	uxo.Body.Coins = 1
+	now = uint64(1000000*3600) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours+1, hours)
+
+	// 1000000 hours plus 1 second have passed, output has 1 droplet, should gain 1 coin hour
+	uxo.Body.Coins = 1
+	now = uint64(1000000*3600+1) + uxo.Head.Time
+	hours, err = uxo.CoinHours(now)
+	require.NoError(t, err)
+	require.Equal(t, uxo.Body.Hours+1, hours)
+
+	// No hours passed, using initial coin hours
 	uxo.Body.Coins = _genCoins
 	uxo.Body.Hours = _genCoinHours
 	hours, err = uxo.CoinHours(uxo.Head.Time)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours)
 
+	// One hour passed, using initial coin hours
 	hours, err = uxo.CoinHours(uxo.Head.Time + 3600)
 	require.NoError(t, err)
 	require.Equal(t, hours, uxo.Body.Hours+(_genCoins/1e6))
 
+	// No hours passed and no hours to begin with
 	uxo.Body.Hours = 0
 	hours, err = uxo.CoinHours(uxo.Head.Time)
 	require.NoError(t, err)
 	require.Equal(t, hours, uint64(0))
 
-	_, err = uxo.CoinHours(100000000000000)
-	testutil.RequireError(t, err, "uint64 multiplication overflow")
+	// Centuries have passed, time-based calculation overflows uint64
+	// when calculating the whole coin seconds
+	uxo.Body.Coins = 2e6
+	_, err = uxo.CoinHours(math.MaxUint64)
+	testutil.RequireError(t, err, "Calculating whole coin seconds overflows uint64 seconds=18446744073709551515 coins=2")
 
+	// Centuries have passed, time-based calculation overflows uint64
+	// when calculating the droplet seconds
+	uxo.Body.Coins = 1e6 + 1e5
+	_, err = uxo.CoinHours(math.MaxUint64)
+	testutil.RequireError(t, err, "Calculating droplet seconds overflows uint64 seconds=18446744073709551515 droplets=100000")
+
+	// Output would overflow if given more hours, has reached its limit
 	uxo.Body.Coins = 3600e6
 	uxo.Body.Hours = math.MaxUint64 - 1
 	_, err = uxo.CoinHours(uxo.Head.Time + 1000)
@@ -158,12 +217,27 @@ func TestUxArrayCoinHours(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(400), n)
 
+	// 1 hour later
+	n, err = uxa.CoinHours(uxa[0].Head.Time + 3600)
+	require.NoError(t, err)
+	require.Equal(t, uint64(404), n)
+
+	// 1.5 hours later
+	n, err = uxa.CoinHours(uxa[0].Head.Time + 3600 + 1800)
+	require.NoError(t, err)
+	require.Equal(t, uint64(404), n)
+
+	// 2 hours later
+	n, err = uxa.CoinHours(uxa[0].Head.Time + 3600 + 4600)
+	require.NoError(t, err)
+	require.Equal(t, uint64(408), n)
+
 	uxa[2].Body.Hours = math.MaxUint64 - 100
 	_, err = uxa.CoinHours(uxa[0].Head.Time)
-	require.Equal(t, err, errors.New("UxArray.CoinHours addition overflow"))
+	require.Equal(t, errors.New("UxArray.CoinHours addition overflow"), err)
 
 	_, err = uxa.CoinHours(uxa[0].Head.Time * 1000000000000)
-	require.Equal(t, err, errors.New("uint64 multiplication overflow"))
+	require.Equal(t, errors.New("UxOut.CoinsHours addition overflow"), err)
 }
 
 func TestUxArrayHashArray(t *testing.T) {

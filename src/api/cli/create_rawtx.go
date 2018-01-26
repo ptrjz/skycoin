@@ -364,7 +364,7 @@ func CreateRawTx(c *webrpc.Client, wlt *wallet.Wallet, inAddrs []string, chgAddr
 	// The head block is not exposed over the JSON RPC, which webrpc.Client uses.
 	// Need to remove the JSON RPC API and have the client make requests to the HTTP API.
 	// Once the HTTP API is used,
-	// Need to requests /blockchain/metadata to get the head block seq, and then request the block to get the time
+	// Need to request /blockchain/metadata to get the head block time
 	// This could lead to race conditions; /blockchain/metadata should return the full head, or have an API endpoint
 	// just for the head, and/or include the head block in the get_outputs response
 	// The head block is used for calculating inUxs's coin hours.

@@ -349,8 +349,8 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 
 	// A UxOut does not exist, it was already spent
 	err = bc.VerifyTransactionAllConstraints(tx, DefaultMaxBlockSize)
-	er := fmt.Errorf("unspent output of %s does not exist", tx.In[0].Hex())
-	require.Equal(t, er, err)
+	expectedErr := fmt.Errorf("unspent output of %s does not exist", tx.In[0].Hex())
+	require.Equal(t, expectedErr, err)
 
 	// Check invalid sig
 	uxs = coin.CreateUnspents(b.Head, tx)

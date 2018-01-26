@@ -700,7 +700,7 @@ func TestVerifyTransactionHoursSpending(t *testing.T) {
 				},
 			},
 			headTime: math.MaxUint64,
-			err:      errors.New("uint64 multiplication overflow"),
+			err:      errors.New("Calculating whole coin seconds overflows uint64 seconds=18446744073709551615 coins=10"),
 		},
 
 		{
@@ -876,9 +876,9 @@ func TestSortTransactions(t *testing.T) {
 		},
 
 		{
-			name:       "invalid fee multiplication is filtered",
+			name:       "invalid fee multiplication is capped",
 			txns:       Transactions{txns[1], txns[2], txns[0]},
-			sortedTxns: Transactions{txns[0], txns[1]},
+			sortedTxns: Transactions{txns[2], txns[0], txns[1]},
 			feeCalc: func(txn *Transaction) (uint64, error) {
 				if txn.Hash() == txns[2].Hash() {
 					return math.MaxUint64 / 2, nil
