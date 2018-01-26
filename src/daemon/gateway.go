@@ -523,6 +523,7 @@ func (gw *Gateway) Spend(wltID string, coins uint64, dest cipher.Address) (*coin
 		err = gw.d.Visor.InjectBroadcastTransaction(*tx, gw.d.Pool)
 		if err != nil {
 			logger.Error("Inject transaction failed: %v", err)
+			return
 		}
 	})
 
