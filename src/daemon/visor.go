@@ -542,7 +542,7 @@ type GetBlocksMessage struct {
 func NewGetBlocksMessage(lastBlock uint64, requestedBlocks uint64) *GetBlocksMessage {
 	return &GetBlocksMessage{
 		LastBlock:       lastBlock,
-		RequestedBlocks: requestedBlocks, //count of blocks requested
+		RequestedBlocks: requestedBlocks, // count of blocks requested
 	}
 }
 

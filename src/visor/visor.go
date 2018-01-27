@@ -579,7 +579,10 @@ func (vs *Visor) GetBlocks(start, end uint64) []coin.SignedBlock {
 // InjectTransaction records a coin.Transaction to the UnconfirmedTxnPool if the txn is not
 // already in the blockchain
 func (vs *Visor) InjectTransaction(txn coin.Transaction) (bool, error) {
-	// TODO -- ignore soft constraints here?
+	// TODO: Save the transaction to the unconfirmed pool as long as it does not violate HARD constraints,
+	//       but do not propagate it if it violates SOFT or HARD constraints
+	// For now, do not save it if it violates SOFT or HARD constraints.
+	// An expiry mechanism is required in the unconfirmed pool before saving transactions that violate SOFT constraints
 	if err := vs.Blockchain.VerifyTransactionAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
 		logger.Warning("vs.Blockchain.VerifyTransactionAllConstraints failed for txn %s: %v", txn.TxIDHex(), err)
 		return false, err

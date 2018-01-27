@@ -259,7 +259,8 @@ func (up *Unspents) updateUxHashInCache(hash cipher.SHA256) {
 }
 
 // GetArray returns UxOut by given hash array, will return error when
-// if any of the hashes is not exist.
+// if any of the hashes do not exist.
+// It MUST return this error, to prevent double spend attacks.
 func (up *Unspents) GetArray(hashes []cipher.SHA256) (coin.UxArray, error) {
 	up.Lock()
 	defer up.Unlock()
