@@ -289,11 +289,14 @@ func (vs *Visor) SetTxnsAnnounced(txns []cipher.SHA256) {
 	})
 }
 
-// InjectBroadcastTransaction injects transaction to the unconfirmed pool and broadcasts it
-// The transaction must have a valid fee, be well-formed and not spend timelocked outputs.
+// InjectBroadcastTransaction injects transaction to the unconfirmed pool and broadcasts it.
+// If the transaction violates either hard or soft constraints, it is not broadcast.
+// This method is to be used by user-initiated transaction injections.
+// For transactions received over the network, use InjectTransaction and check the result to
+// decide on repropagation.
 func (vs *Visor) InjectBroadcastTransaction(txn coin.Transaction, pool *Pool) error {
 	return vs.strand("InjectBroadcastTransaction", func() error {
-		if _, err := vs.v.InjectTransaction(txn); err != nil {
+		if _, err := vs.v.InjectTransactionStrict(txn); err != nil {
 			return err
 		}
 
@@ -301,15 +304,18 @@ func (vs *Visor) InjectBroadcastTransaction(txn coin.Transaction, pool *Pool) er
 	})
 }
 
-// InjectTransaction only try to append transaction into local blockchain, don't broadcast it.
-func (vs *Visor) InjectTransaction(tx coin.Transaction) (bool, error) {
+// InjectTransaction adds a transaction to the unconfirmed txn pool if it does not violate hard constraints.
+// The transaction is added to the pool if it only violates soft constraints.
+// If a soft constraint is violated, the specific error is returned separately.
+func (vs *Visor) InjectTransaction(tx coin.Transaction) (bool, *visor.ErrTxnViolatesSoftConstraint, error) {
 	var known bool
+	var softErr *visor.ErrTxnViolatesSoftConstraint
 	err := vs.strand("InjectTransaction", func() error {
 		var err error
-		known, err = vs.v.InjectTransaction(tx)
+		known, softErr, err = vs.v.InjectTransaction(tx)
 		return err
 	})
-	return known, err
+	return known, softErr, err
 }
 
 // Sends a signed block to all connections.
@@ -804,7 +810,7 @@ func (gtm *GiveTxnsMessage) Process(d *Daemon) {
 	// Update unconfirmed pool with these transactions
 	for _, txn := range gtm.Txns {
 		// Only announce transactions that are new to us, so that peers can't spam relays
-		known, err := d.Visor.InjectTransaction(txn)
+		known, softErr, err := d.Visor.InjectTransaction(txn)
 		if err != nil {
 			logger.Warning("Failed to record transaction %s: %v", txn.Hash().Hex(), err)
 			continue
@@ -812,6 +818,8 @@ func (gtm *GiveTxnsMessage) Process(d *Daemon) {
 
 		if known {
 			logger.Warning("Duplicate Transaction: %s", txn.Hash().Hex())
+		} else if softErr != nil {
+			logger.Warning("Transaction soft violation: %v", err)
 		} else {
 			hashes = append(hashes, txn.Hash())
 		}

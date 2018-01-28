@@ -512,14 +512,15 @@ func (gw *Gateway) Spend(wltID string, coins uint64, dest cipher.Address) (*coin
 		// create spend validator
 		unspent := gw.v.Blockchain.Unspent()
 		sv := newSpendValidator(gw.v.Unconfirmed, unspent)
-		// create and sign transaction
+
+		// Create and sign transaction
 		tx, err = gw.vrpc.CreateAndSignTransaction(wltID, sv, unspent, gw.v.Blockchain.Time(), coins, dest)
 		if err != nil {
 			logger.Error("Create transaction failed: %v", err)
 			return
 		}
 
-		// inject transaction
+		// Inject transaction
 		err = gw.d.Visor.InjectBroadcastTransaction(*tx, gw.d.Pool)
 		if err != nil {
 			logger.Error("Inject transaction failed: %v", err)

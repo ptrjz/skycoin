@@ -61,7 +61,7 @@ func MakeTransactionForChain(t *testing.T, bc *visor.Blockchain, ux coin.UxOut, 
 	err = tx.Verify()
 	require.NoError(t, err)
 
-	err = bc.VerifyTransactionHardConstraints(tx)
+	err = bc.VerifySingleTxnHardConstraints(tx)
 	require.NoError(t, err)
 
 	return tx
@@ -152,8 +152,10 @@ func TestVerifyTransactionInvalidFee(t *testing.T) {
 		errC <- errors.New("stop")
 	}()
 
-	_, err := v.InjectTransaction(txn)
-	testutil.RequireError(t, err, visor.NewErrTransactionViolatesSoftConstraint(fee.ErrTxnNoFee).Error())
+	_, softErr, err := v.InjectTransaction(txn)
+	require.NoError(t, err)
+	require.NotNil(t, softErr)
+	require.Equal(t, visor.NewErrTxnViolatesSoftConstraint(fee.ErrTxnNoFee), *softErr)
 }
 
 func TestVerifyTransactionInvalidSignature(t *testing.T) {
@@ -185,8 +187,9 @@ func TestVerifyTransactionInvalidSignature(t *testing.T) {
 		errC <- errors.New("stop")
 	}()
 
-	_, err := v.InjectTransaction(txn)
-	testutil.RequireError(t, err, visor.NewErrTransactionViolatesHardConstraint(errors.New("Invalid number of signatures")).Error())
+	_, softErr, err := v.InjectTransaction(txn)
+	require.Nil(t, softErr)
+	testutil.RequireError(t, err, visor.NewErrTxnViolatesHardConstraint(errors.New("Invalid number of signatures")).Error())
 }
 
 func TestInjectValidTransaction(t *testing.T) {
@@ -218,7 +221,8 @@ func TestInjectValidTransaction(t *testing.T) {
 	require.Len(t, txns, 0)
 
 	// Call injectTransaction
-	_, err := v.InjectTransaction(txn)
+	_, softErr, err := v.InjectTransaction(txn)
+	require.Nil(t, softErr)
 	require.NoError(t, err)
 
 	// The transaction should appear in the unconfirmed pool
@@ -227,7 +231,7 @@ func TestInjectValidTransaction(t *testing.T) {
 	require.Equal(t, txns[0], txn)
 }
 
-func TestInjectInvalidTransaction(t *testing.T) {
+func TestInjectTransactionSoftViolationNoFee(t *testing.T) {
 	db, close := testutil.PrepareDB(t)
 	defer close()
 
@@ -256,12 +260,14 @@ func TestInjectInvalidTransaction(t *testing.T) {
 	require.Len(t, txns, 0)
 
 	// Call injectTransaction
-	_, err := v.InjectTransaction(txn)
-	testutil.RequireError(t, err, visor.NewErrTransactionViolatesSoftConstraint(fee.ErrTxnNoFee).Error())
+	_, softErr, err := v.InjectTransaction(txn)
+	require.NoError(t, err)
+	require.NotNil(t, softErr)
+	require.Equal(t, visor.NewErrTxnViolatesSoftConstraint(fee.ErrTxnNoFee), *softErr)
 
 	// The transaction should appear in the unconfirmed pool
 	txns = v.v.Unconfirmed.RawTxns()
-	require.Len(t, txns, 0)
+	require.Len(t, txns, 1)
 }
 
 func TestSplitHashes(t *testing.T) {

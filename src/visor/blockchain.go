@@ -264,8 +264,9 @@ func (bc Blockchain) verifyUxHash(b coin.Block) error {
 	return nil
 }
 
-// VerifyTransactionHardConstraints checks that the transaction does not violate hard constraints
-func (bc Blockchain) VerifyTransactionHardConstraints(tx coin.Transaction) error {
+// VerifyBlockTxnConstraints checks that the transaction does not violate hard constraints,
+// for transactions that are already included in a block.
+func (bc Blockchain) VerifyBlockTxnConstraints(tx coin.Transaction) error {
 	// NOTE: Unspent().GetArray() returns an error if not all tx.In can be found
 	// This prevents double spends
 	uxIn, err := bc.Unspent().GetArray(tx.In)
@@ -278,39 +279,18 @@ func (bc Blockchain) VerifyTransactionHardConstraints(tx coin.Transaction) error
 		return err
 	}
 
-	return bc.verifyTransactionHardConstraints(tx, head, uxIn)
+	return bc.verifyBlockTxnHardConstraints(tx, head, uxIn)
 }
 
-// VerifyTransactionAllConstraints checks that the transaction does not violate soft or hard constraints
-func (bc Blockchain) VerifyTransactionAllConstraints(tx coin.Transaction, maxSize int) error {
-	// NOTE: Unspent().GetArray() returns an error if not all tx.In can be found
-	// This prevents double spends
-	uxIn, err := bc.Unspent().GetArray(tx.In)
-	if err != nil {
-		return err
-	}
-
-	head, err := bc.Head()
-	if err != nil {
-		return err
-	}
-
-	if err := bc.verifyTransactionHardConstraints(tx, head, uxIn); err != nil {
-		return err
-	}
-
-	return VerifyTransactionSoftConstraints(tx, head.Time(), uxIn, maxSize)
-}
-
-func (bc Blockchain) verifyTransactionHardConstraints(tx coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
-	if err := VerifyTransactionHardConstraints(tx, head, uxIn); err != nil {
+func (bc Blockchain) verifyBlockTxnHardConstraints(tx coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := VerifyBlockTxnConstraints(tx, head, uxIn); err != nil {
 		return err
 	}
 
 	if DebugLevel1 {
 		// Check that new unspents don't collide with existing.
 		// This should not occur but is a sanity check.
-		// NOTE: this is not in the top-level VerifyTransactionHardConstraints
+		// NOTE: this is not in the top-level VerifyBlockTxnConstraints
 		// because it relies on the unspent pool to check for existence.
 		// For remote callers such as the CLI, they'd need to download the whole
 		// unspent pool or make a separate API call to check for duplicate unspents.
@@ -318,7 +298,73 @@ func (bc Blockchain) verifyTransactionHardConstraints(tx coin.Transaction, head 
 		for i := range uxOut {
 			if bc.Unspent().Contains(uxOut[i].Hash()) {
 				err := errors.New("New unspent collides with existing unspent")
-				return NewErrTransactionViolatesHardConstraint(err)
+				return NewErrTxnViolatesHardConstraint(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// VerifySingleTxnHardConstraints checks that the transaction does not violate hard constraints.
+// for transactions that are not included in a block.
+func (bc Blockchain) VerifySingleTxnHardConstraints(tx coin.Transaction) error {
+	// NOTE: Unspent().GetArray() returns an error if not all tx.In can be found
+	// This prevents double spends
+	uxIn, err := bc.Unspent().GetArray(tx.In)
+	if err != nil {
+		return err
+	}
+
+	head, err := bc.Head()
+	if err != nil {
+		return err
+	}
+
+	return bc.verifySingleTxnHardConstraints(tx, head, uxIn)
+}
+
+// VerifySingleTxnAllConstraints checks that the transaction does not violate hard or soft constraints,
+// for transactions that are not included in a block.
+// Hard constraints are checked before soft constraints.
+func (bc Blockchain) VerifySingleTxnAllConstraints(tx coin.Transaction, maxSize int) error {
+	// NOTE: Unspent().GetArray() returns an error if not all tx.In can be found
+	// This prevents double spends
+	uxIn, err := bc.Unspent().GetArray(tx.In)
+	if err != nil {
+		return err
+	}
+
+	head, err := bc.Head()
+	if err != nil {
+		return err
+	}
+
+	// Hard constraints must be checked before soft constraints
+	if err := bc.verifySingleTxnHardConstraints(tx, head, uxIn); err != nil {
+		return err
+	}
+
+	return VerifySingleTxnSoftConstraints(tx, head.Time(), uxIn, maxSize)
+}
+
+func (bc Blockchain) verifySingleTxnHardConstraints(tx coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := VerifySingleTxnHardConstraints(tx, head, uxIn); err != nil {
+		return err
+	}
+
+	if DebugLevel1 {
+		// Check that new unspents don't collide with existing.
+		// This should not occur but is a sanity check.
+		// NOTE: this is not in the top-level VerifySingleTxnHardConstraints
+		// because it relies on the unspent pool to check for existence.
+		// For remote callers such as the CLI, they'd need to download the whole
+		// unspent pool or make a separate API call to check for duplicate unspents.
+		uxOut := coin.CreateUnspents(head.Head, tx)
+		for i := range uxOut {
+			if bc.Unspent().Contains(uxOut[i].Hash()) {
+				err := errors.New("New unspent collides with existing unspent")
+				return NewErrTxnViolatesHardConstraint(err)
 			}
 		}
 	}
@@ -399,7 +445,7 @@ func (bc Blockchain) processTransactions(txs coin.Transactions) (coin.Transactio
 	for i, tx := range txns {
 		// Check the transaction against itself.  This covers the hash,
 		// signature indices and duplicate spends within itself
-		err := bc.VerifyTransactionHardConstraints(tx)
+		err := bc.VerifyBlockTxnConstraints(tx)
 		if err != nil {
 			if bc.arbitrating {
 				skip[i] = struct{}{}
@@ -461,7 +507,7 @@ func (bc Blockchain) processTransactions(txs coin.Transactions) (coin.Transactio
 
 	// Check to ensure that there are no duplicate spends in the entire block,
 	// and that we aren't creating duplicate outputs.  Duplicate outputs
-	// within a single Transaction are already checked by VerifyTransactionHardConstraints
+	// within a single Transaction are already checked by VerifyBlockTxnConstraints
 	hashes := txns.Hashes()
 	for i := 0; i < len(txns)-1; i++ {
 		s := txns[i]

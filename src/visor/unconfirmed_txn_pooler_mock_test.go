@@ -316,9 +316,20 @@ func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer, p1 int) []cipher.SHA
 }
 
 // RemoveTransactions mocked method
-func (m *UnconfirmedTxnPoolerMock) RemoveTransactions(p0 []cipher.SHA256) {
+func (m *UnconfirmedTxnPoolerMock) RemoveTransactions(p0 []cipher.SHA256) error {
 
-	m.Called(p0)
+	ret := m.Called(p0)
+
+	var r0 error
+	switch res := ret.Get(0).(type) {
+	case nil:
+	case error:
+		r0 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0
 
 }
 

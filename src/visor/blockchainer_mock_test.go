@@ -336,8 +336,8 @@ func (m *BlockchainerMock) UpdateDB(p0 func(tx *bolt.Tx) error) error {
 
 }
 
-// VerifyTransactionAllConstraints mocked method
-func (m *BlockchainerMock) VerifyTransactionAllConstraints(p0 coin.Transaction, p1 int) error {
+// VerifySingleTxnAllConstraints mocked method
+func (m *BlockchainerMock) VerifySingleTxnAllConstraints(p0 coin.Transaction, p1 int) error {
 
 	ret := m.Called(p0, p1)
 
@@ -354,8 +354,26 @@ func (m *BlockchainerMock) VerifyTransactionAllConstraints(p0 coin.Transaction, 
 
 }
 
-// VerifyTransactionHardConstraints mocked method
-func (m *BlockchainerMock) VerifyTransactionHardConstraints(p0 coin.Transaction) error {
+// VerifySingleTxnHardConstraints mocked method
+func (m *BlockchainerMock) VerifySingleTxnHardConstraints(p0 coin.Transaction) error {
+
+	ret := m.Called(p0)
+
+	var r0 error
+	switch res := ret.Get(0).(type) {
+	case nil:
+	case error:
+		r0 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0
+
+}
+
+// VerifyBlockTxnConstraints mocked method
+func (m *BlockchainerMock) VerifyBlockTxnConstraints(p0 coin.Transaction) error {
 
 	ret := m.Called(p0)
 

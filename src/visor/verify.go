@@ -13,15 +13,42 @@ import (
 verify.go: Methods for handling transaction verification
 
 There are two levels of transaction constraint: HARD and SOFT
+There are two situations in which transactions are verified:
+    * When included in a block
+    * When not in a block
+
+For transactions in a block, use VerifyBlockTxnConstraints.
+For transactions outside of a block, use VerifySingleTxnHardConstraints and VerifySingleTxnSoftConstraints.
+
+VerifyBlockTxnConstraints only checks hard constraints. Soft constraints do not apply for transactions inside of a block.
+
+Soft and hard constraints have special handling for single transactions.
+
+When the transaction is received over the network, a transaction is not injected to the pool if it violates the HARD constraints.
+If it violates soft constraints, it is still injected to the pool (TODO: with expiration) but is not rebroadcast to peers.
+If it does not violate any constraints it is injected and rebroadcast to peers.
+
+When the transaction is created by the user (with create_rawtx or /spend), SOFT and HARD constraints apply, to prevent
+the user from injecting a transaction to their local pool that cannot be confirmed.
+
+When creating a new block from transactions, SOFT and HARD constraints apply.
+
+Transactions in the unconfirmed pool are periodically checked for validity. (TODO: audit/implement this feature)
+The transaction pool state transfer phases are as follows:
+    valid -> hard_invalid: remove
+    valid -> soft_invalid: mark as invalid
+    soft_invalid -> valid: mark as valid, broadcast
+    soft_invalid -> hard_invalid: remove
+    soft_invalid -> expired: remove
 
 HARD constraints can NEVER be violated. These include:
     - Malformed transaction
     - Double spends
-        - NOTE: Double spend verification must be done against the unspent output set,
-                the methods here do not operate on the unspent output set.
-                They accept a `uxIn coin.UxArray` argument, which are the unspents associated
-                with the transaction's inputs.  The unspents must be queried from the unspent
-                output set first, thus if any unspent is not found for the input, it cannot be spent.
+    - NOTE: Double spend verification must be done against the unspent output set,
+            the methods here do not operate on the unspent output set.
+            They accept a `uxIn coin.UxArray` argument, which are the unspents associated
+            with the transaction's inputs.  The unspents must be queried from the unspent
+            output set first, thus if any unspent is not found for the input, it cannot be spent.
 
 SOFT constraints are based upon mutable parameters. These include:
     - Max block size (transaction must not be larger than this value)
@@ -29,72 +56,55 @@ SOFT constraints are based upon mutable parameters. These include:
     - Timelocked distribution addresses
     - Decimal place restrictions
 
+NOTE: Due to a bug which allowed overflowing output coin hours to be included in a block,
+      overflowing output coin hours are not checked when adding a signed block, so that the existing blocks can be processed.
+      When creating or receiving a single transaction from the network, it is treated as a HARD constraint.
+
 These methods should be called via the Blockchain object when possible,
-using Blockchain.VerifyTransactionHardConstraints and Blockchain.VerifyTransactionAllConstraints,
+using Blockchain.VerifyBlockTxnConstraints, Blockchain.VerifySingleTxnHardConstraints and Blockchain.VerifySingleTxnAllConstraints
 since data from the blockchain and unspent output set are required to fully validate a transaction.
-
-How soft and hard verification are applied:
-
-- When adding a signed block from the network, HARD constraints are applied.
-  Any block whose transactions violate HARD constraints will be rejected, regardless of the signature.
-  This occurs in Blockchain.processTransactions().
-
-- When creating a new block, HARD and SOFT constraints are applied to transactions before including them
-  in the new block.
-  Soft constraints are applied in Visor.CreateBlock().
-
-- When adding a transaction to the unconfirmed transaction pool, HARD and SOFT constraints are applied.
-    HARD and SOFT constraints are applied by Visor.InjectTransaction
-    HARD constraints are applied by UnconfirmedTxnPool.InjectTransaction
-- TODO: This policy should be changed to:
-    - If the transaction violates HARD constraints, do not add it to the unconfirmed txn pool or broadcast it.
-    - If the transaction only violates SOFT constraints, add it to the unconfirmed txn pool as an "invalid" txn, but do not broadcast it.
-    - If the transaction has been invalid in the unconfirmed txn pool for too long, remove it.
-    - Periodically check the invalid transactions in the unconfirmed txn pool for validity.
-        - If one stops violating constraints, broadcast it.
-        - If one begins violating HARD constraints, remove it.
 
 */
 
-// ErrTransactionViolatesHardConstraint is returned when a transaction violates hard constraints
-type ErrTransactionViolatesHardConstraint struct {
+// ErrTxnViolatesHardConstraint is returned when a transaction violates hard constraints
+type ErrTxnViolatesHardConstraint struct {
 	Err error
 }
 
-// NewErrTransactionViolatesHardConstraint creates ErrTransactionViolatesHardConstraint
-func NewErrTransactionViolatesHardConstraint(err error) error {
+// NewErrTxnViolatesHardConstraint creates ErrTxnViolatesHardConstraint
+func NewErrTxnViolatesHardConstraint(err error) error {
 	if err == nil {
 		return nil
 	}
-	return ErrTransactionViolatesHardConstraint{
+	return ErrTxnViolatesHardConstraint{
 		Err: err,
 	}
 }
 
-func (e ErrTransactionViolatesHardConstraint) Error() string {
+func (e ErrTxnViolatesHardConstraint) Error() string {
 	return fmt.Sprintf("Transaction violates hard constraint: %v", e.Err)
 }
 
-// ErrTransactionViolatesSoftConstraint is returned when a transaction violates soft constraints
-type ErrTransactionViolatesSoftConstraint struct {
+// ErrTxnViolatesSoftConstraint is returned when a transaction violates soft constraints
+type ErrTxnViolatesSoftConstraint struct {
 	Err error
 }
 
-// NewErrTransactionViolatesSoftConstraint creates ErrTransactionViolatesSoftConstraint
-func NewErrTransactionViolatesSoftConstraint(err error) error {
+// NewErrTxnViolatesSoftConstraint creates ErrTxnViolatesSoftConstraint
+func NewErrTxnViolatesSoftConstraint(err error) error {
 	if err == nil {
 		return nil
 	}
-	return ErrTransactionViolatesSoftConstraint{
+	return ErrTxnViolatesSoftConstraint{
 		Err: err,
 	}
 }
 
-func (e ErrTransactionViolatesSoftConstraint) Error() string {
+func (e ErrTxnViolatesSoftConstraint) Error() string {
 	return fmt.Sprintf("Transaction violates soft constraint: %v", e.Err)
 }
 
-// VerifyTransactionSoftConstraints returns an error if any "soft" constraint are violated.
+// VerifySingleTxnSoftConstraints returns an error if any "soft" constraint are violated.
 // "soft" constaints are enforced at the network and block publication level,
 // but are not enforced at the blockchain level.
 // Clients will not accept blocks that violate hard constraints, but will
@@ -104,15 +114,15 @@ func (e ErrTransactionViolatesSoftConstraint) Error() string {
 //      * That the transaction burn enough coin hours (the fee)
 //      * That if that transaction does not spend from a locked distribution address
 //      * That the transaction does not create outputs with a higher decimal precision than is allowed
-//      * That the transaction's total output hours do not overflow uint64 (this would be a hard constraint, but is here by necessity)
-func VerifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
-	if err := verifyTransactionSoftConstraints(txn, headTime, uxIn, maxSize); err != nil {
-		return NewErrTransactionViolatesSoftConstraint(err)
+func VerifySingleTxnSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
+	if err := verifyTxnSoftConstraints(txn, headTime, uxIn, maxSize); err != nil {
+		return NewErrTxnViolatesSoftConstraint(err)
 	}
+
 	return nil
 }
 
-func verifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
+func verifyTxnSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
 	if txn.Size() > maxSize {
 		return errors.New("Transaction size bigger than max block size")
 	}
@@ -137,16 +147,10 @@ func verifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxI
 		}
 	}
 
-	// Verify CoinHours do not overflow
-	// NOTE: This would be in the hard constraints, but a bug caused overflowing
-	// coinhour transactions to be published. To avoid breaking the blockchain
-	// sync, the rules are applied here.
-	// If/when the blockchain is upgraded/reset, move this to the hard constraints.
-	_, err = txn.OutputHours()
-	return err
+	return nil
 }
 
-// VerifyTransactionHardConstraints returns an error if any "hard" constraints are violated.
+// VerifyBlockTxnConstraints returns an error if any "hard" constraints are violated.
 // "hard" constraints are always enforced and if violated the transaction
 // should not be included in any block and any block that includes such a transaction
 // should be rejected.
@@ -156,15 +160,50 @@ func verifyTransactionSoftConstraints(txn coin.Transaction, headTime uint64, uxI
 //      * That the signatures on the transaction are valid
 //      * That there are no duplicate ux inputs
 //      * That there are no duplicate outputs
+//      * That the transaction input and output coins do not overflow uint64
+//      * That the transaction input hours do not overflow uint64
 // NOTE: Double spends are checked against the unspent output pool when querying for uxIn
-func VerifyTransactionHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
-	if err := verifyTransactionHardConstraints(txn, head, uxIn); err != nil {
-		return NewErrTransactionViolatesHardConstraint(err)
+// NOTE: output hours overflow is treated as a soft constraint for transactions inside of a block, due to a bug
+//       which allowed some blocks to be published with overflowing output hours.
+func VerifyBlockTxnConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := verifyTxnHardConstraints(txn, head, uxIn); err != nil {
+		return NewErrTxnViolatesHardConstraint(err)
 	}
+
 	return nil
 }
 
-func verifyTransactionHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+// VerifySingleTxnHardConstraints returns an error if any "hard" constraints are violated.
+// "hard" constraints are always enforced and if violated the transaction
+// should not be included in any block and any block that includes such a transaction
+// should be rejected.
+// Checks:
+//      * That the inputs to the transaction exist
+//      * That the transaction does not create or destroy coins
+//      * That the signatures on the transaction are valid
+//      * That there are no duplicate ux inputs
+//      * That there are no duplicate outputs
+//      * That the transaction input and output coins do not overflow uint64
+//      * That the transaction input and output hours do not overflow uint64
+// NOTE: Double spends are checked against the unspent output pool when querying for uxIn
+func VerifySingleTxnHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
+	if err := verifyTxnHardConstraints(txn, head, uxIn); err != nil {
+		return NewErrTxnViolatesHardConstraint(err)
+	}
+
+	// Check for output hours overflow
+	// When verifying a single transaction, this is considered a hard constraint.
+	// For transactions inside of a block, it is a hard constraint.
+	// This is due to a bug which allowed some blocks to be published with overflowing hours,
+	// otherwise this would always be a hard constraint.
+	if _, err := txn.OutputHours(); err != nil {
+		return NewErrTxnViolatesHardConstraint(err)
+	}
+
+	return nil
+}
+
+func verifyTxnHardConstraints(txn coin.Transaction, head *coin.SignedBlock, uxIn coin.UxArray) error {
 	//CHECKLIST: DONE: check for duplicate ux inputs/double spending
 	//     NOTE: Double spends are checked against the unspent output pool when querying for uxIn
 

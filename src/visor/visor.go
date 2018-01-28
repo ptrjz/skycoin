@@ -191,8 +191,9 @@ type Blockchainer interface {
 	Time() uint64
 	NewBlock(txns coin.Transactions, currentTime uint64) (*coin.Block, error)
 	ExecuteBlockWithTx(tx *bolt.Tx, sb *coin.SignedBlock) error
-	VerifyTransactionHardConstraints(tx coin.Transaction) error
-	VerifyTransactionAllConstraints(tx coin.Transaction, maxSize int) error
+	VerifyBlockTxnConstraints(tx coin.Transaction) error
+	VerifySingleTxnHardConstraints(tx coin.Transaction) error
+	VerifySingleTxnAllConstraints(tx coin.Transaction, maxSize int) error
 	TransactionFee(t *coin.Transaction) (uint64, error)
 	Notify(b coin.Block)
 	BindListener(bl BlockListener)
@@ -205,7 +206,7 @@ type UnconfirmedTxnPooler interface {
 	SetAnnounced(hash cipher.SHA256, t time.Time) error
 	InjectTransaction(bc Blockchainer, t coin.Transaction) (bool, error)
 	RawTxns() coin.Transactions
-	RemoveTransactions(txns []cipher.SHA256)
+	RemoveTransactions(txns []cipher.SHA256) error
 	RemoveTransactionsWithTx(tx *bolt.Tx, txns []cipher.SHA256)
 	Refresh(bc Blockchainer, maxBlockSize int) []cipher.SHA256
 	FilterKnown(txns []cipher.SHA256) []cipher.SHA256
@@ -330,33 +331,29 @@ func (vs *Visor) maybeCreateGenesisBlock() error {
 	return vs.ExecuteSignedBlock(sb)
 }
 
-// processUnconfirmedTxns checks if there're unconfirmed transactions that are
+// processUnconfirmedTxns checks if there are unconfirmed transactions that are
 // already executed or now invalid, and removes them
+// TODO -- should this be merged with RefreshUnconfirmed?
 func (vs *Visor) processUnconfirmedTxns() error {
-	removeTxs := []cipher.SHA256{}
-	vs.Unconfirmed.ForEach(func(hash cipher.SHA256, tx *UnconfirmedTxn) error {
-		if err := vs.Blockchain.VerifyTransactionAllConstraints(tx.Txn, vs.Config.MaxBlockSize); err != nil {
+	var removeTxs []cipher.SHA256
+	if err := vs.Unconfirmed.ForEach(func(hash cipher.SHA256, tx *UnconfirmedTxn) error {
+		if err := vs.Blockchain.VerifySingleTxnHardConstraints(tx.Txn); err != nil {
 			removeTxs = append(removeTxs, hash)
-		}
-
-		// Check if the tx already executed
-		txn, err := vs.history.GetTransaction(hash)
-		if err != nil {
-			return fmt.Errorf("process unconfirmed txs failed: %v", err)
-		}
-
-		if txn != nil {
-			removeTxs = append(removeTxs, hash)
+		} else {
+			// Check if the tx already executed
+			if txn, err := vs.history.GetTransaction(hash); err != nil {
+				return fmt.Errorf("process unconfirmed txs failed: %v", err)
+			} else if txn != nil {
+				removeTxs = append(removeTxs, hash)
+			}
 		}
 
 		return nil
-	})
-
-	if len(removeTxs) > 0 {
-		vs.Unconfirmed.RemoveTransactions(removeTxs)
+	}); err != nil {
+		return err
 	}
 
-	return nil
+	return vs.Unconfirmed.RemoveTransactions(removeTxs)
 }
 
 // GenesisPreconditions panics if conditions for genesis block are not met
@@ -394,7 +391,7 @@ func (vs *Visor) CreateBlock(when uint64) (coin.SignedBlock, error) {
 	// Filter transactions that violate all constraints
 	var filteredTxns coin.Transactions
 	for _, txn := range txns {
-		if err := vs.Blockchain.VerifyTransactionAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
+		if err := vs.Blockchain.VerifySingleTxnAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
 			logger.Warning("Transaction %s violates constraints: %v", txn.TxIDHex(), err)
 		} else {
 			filteredTxns = append(filteredTxns, txn)
@@ -577,14 +574,38 @@ func (vs *Visor) GetBlocks(start, end uint64) []coin.SignedBlock {
 }
 
 // InjectTransaction records a coin.Transaction to the UnconfirmedTxnPool if the txn is not
-// already in the blockchain
-func (vs *Visor) InjectTransaction(txn coin.Transaction) (bool, error) {
-	// TODO: Save the transaction to the unconfirmed pool as long as it does not violate HARD constraints,
-	//       but do not propagate it if it violates SOFT or HARD constraints
-	// For now, do not save it if it violates SOFT or HARD constraints.
-	// An expiry mechanism is required in the unconfirmed pool before saving transactions that violate SOFT constraints
-	if err := vs.Blockchain.VerifyTransactionAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
-		logger.Warning("vs.Blockchain.VerifyTransactionAllConstraints failed for txn %s: %v", txn.TxIDHex(), err)
+// already in the blockchain.
+// The bool return value is whether or not the transaction was already in the pool.
+// If the transaction violates hard constraints, it is rejected, and error will not be nil.
+// If the transaction only violates soft constraints, it is still injected, and the soft constraint violation is returned.
+func (vs *Visor) InjectTransaction(txn coin.Transaction) (bool, *ErrTxnViolatesSoftConstraint, error) {
+	// NOTE: Only hard constraints are checked here,
+	//       but if it violates soft constraints it should not be propagated
+	var softErr *ErrTxnViolatesSoftConstraint
+	if err := vs.Blockchain.VerifySingleTxnAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
+		logger.Warning("Blockchain.VerifySingleTxnAllConstraints failed for txn %s: %v", txn.TxIDHex(), err)
+
+		// If a soft violation was encountered, continue but save it.
+		// Otherwise, abort.
+		switch err.(type) {
+		case ErrTxnViolatesSoftConstraint:
+			e := err.(ErrTxnViolatesSoftConstraint)
+			softErr = &e
+		default:
+			return false, nil, err
+		}
+	}
+
+	known, err := vs.Unconfirmed.InjectTransaction(vs.Blockchain, txn)
+	return known, softErr, err
+}
+
+// InjectTransactionStrict records a coin.Transaction to the UnconfirmedTxnPool if the txn is not
+// already in the blockchain.
+// The bool return value is whether or not the transaction was already in the pool.
+// If the transaction violates hard or soft constraints, it is rejected, and error will not be nil.
+func (vs *Visor) InjectTransactionStrict(txn coin.Transaction) (bool, error) {
+	if err := vs.Blockchain.VerifySingleTxnAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
 		return false, err
 	}
 

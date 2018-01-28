@@ -274,10 +274,10 @@ func (utp *UnconfirmedTxnPool) createUnconfirmedTxn(t coin.Transaction) Unconfir
 // InjectTransaction adds a coin.Transaction to the pool, or updates an existing one's timestamps
 // Returns an error if txn is invalid, and whether the transaction already
 // existed in the pool.
+// If the transaction violates hard constraints, it is rejected. Soft constraints are ignored.
 func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transaction) (bool, error) {
-	// NOTE: Only hard constraints are checked here,
-	//       but if it violates soft constraints it should not be propagated
-	if err := bc.VerifyTransactionHardConstraints(t); err != nil {
+	if err := bc.VerifySingleTxnHardConstraints(t); err != nil {
+		logger.Warning("bc.VerifySingleTxnHardConstraints failed for txn %s: %v", t.TxIDHex(), err)
 		return false, err
 	}
 
@@ -340,11 +340,17 @@ func (utp *UnconfirmedTxnPool) removeTxn(bc *Blockchain, txHash cipher.SHA256) {
 
 // Removes multiple txns at once. Slightly more efficient than a series of
 // single RemoveTxns.  Hashes is an array of Transaction hashes.
-func (utp *UnconfirmedTxnPool) removeTxns(hashes []cipher.SHA256) {
+func (utp *UnconfirmedTxnPool) removeTxns(hashes []cipher.SHA256) error {
 	for i := range hashes {
-		utp.txns.delete(hashes[i])
-		utp.unspent.delete(hashes[i])
+		if err := utp.txns.delete(hashes[i]); err != nil {
+			return err
+		}
+		if err := utp.unspent.delete(hashes[i]); err != nil {
+			return err
+		}
 	}
+
+	return nil
 }
 
 func (utp *UnconfirmedTxnPool) removeTxnsWithTx(tx *bolt.Tx, hashes []cipher.SHA256) {
@@ -355,8 +361,8 @@ func (utp *UnconfirmedTxnPool) removeTxnsWithTx(tx *bolt.Tx, hashes []cipher.SHA
 }
 
 // RemoveTransactions removes confirmed txns from the pool
-func (utp *UnconfirmedTxnPool) RemoveTransactions(txns []cipher.SHA256) {
-	utp.removeTxns(txns)
+func (utp *UnconfirmedTxnPool) RemoveTransactions(txns []cipher.SHA256) error {
+	return utp.removeTxns(txns)
 }
 
 // RemoveTransactionsWithTx remove transactions with bolt.Tx
@@ -371,7 +377,7 @@ func (utp *UnconfirmedTxnPool) Refresh(bc Blockchainer, maxBlockSize int) (hashe
 	utp.txns.rangeUpdate(func(key cipher.SHA256, tx *UnconfirmedTxn) {
 		tx.Checked = now.UnixNano()
 		if tx.IsValid == 0 {
-			if bc.VerifyTransactionAllConstraints(tx.Txn, maxBlockSize) == nil {
+			if bc.VerifySingleTxnAllConstraints(tx.Txn, maxBlockSize) == nil {
 				tx.IsValid = 1
 				hashes = append(hashes, tx.Hash())
 			}

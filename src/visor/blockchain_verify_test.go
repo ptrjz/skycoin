@@ -59,7 +59,7 @@ func MakeTransactionForChain(t *testing.T, bc *Blockchain, ux coin.UxOut, sec ci
 	err = tx.Verify()
 	require.NoError(t, err)
 
-	err = bc.VerifyTransactionHardConstraints(tx)
+	err = bc.VerifySingleTxnHardConstraints(tx)
 	require.NoError(t, err)
 
 	return tx
@@ -279,11 +279,11 @@ func executeGenesisSpendTransaction(t *testing.T, db *bolt.DB, bc *Blockchain, t
 }
 
 func requireSoftViolation(t *testing.T, msg string, err error) {
-	require.Equal(t, NewErrTransactionViolatesSoftConstraint(errors.New(msg)), err)
+	require.Equal(t, NewErrTxnViolatesSoftConstraint(errors.New(msg)), err)
 }
 
 func requireHardViolation(t *testing.T, msg string, err error) {
-	require.Equal(t, NewErrTransactionViolatesHardConstraint(errors.New(msg)), err)
+	require.Equal(t, NewErrTxnViolatesHardConstraint(errors.New(msg)), err)
 }
 
 func TestVerifyTransactionAllConstraints(t *testing.T) {
@@ -306,11 +306,11 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 	// create normal spending tx
 	uxs := coin.CreateUnspents(gb.Head, gb.Body.Transactions[0])
 	tx := makeSpendTx(t, uxs, []cipher.SecKey{genSecret}, toAddr, coins)
-	err = bc.VerifyTransactionAllConstraints(tx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(tx, DefaultMaxBlockSize)
 	require.NoError(t, err)
 
 	// Transaction size exceeds maxSize
-	err = bc.VerifyTransactionAllConstraints(tx, tx.Size()-1)
+	err = bc.VerifySingleTxnAllConstraints(tx, tx.Size()-1)
 	requireSoftViolation(t, "Transaction size bigger than max block size", err)
 
 	// Invalid transaction fee
@@ -320,7 +320,7 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 		hours += ux.Body.Hours
 	}
 	tx = makeSpendTxWithHoursBurned(t, uxs, []cipher.SecKey{genSecret}, toAddr, coins, 0)
-	err = bc.VerifyTransactionAllConstraints(tx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(tx, DefaultMaxBlockSize)
 	requireSoftViolation(t, "Transaction has zero coinhour fee", err)
 
 	// Transaction locking is tested by TestVerifyTransactionIsLocked
@@ -328,7 +328,7 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 	// Test invalid header hash
 	originInnerHash := tx.InnerHash
 	tx.InnerHash = cipher.SHA256{}
-	err = bc.VerifyTransactionAllConstraints(tx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(tx, DefaultMaxBlockSize)
 	requireHardViolation(t, "Invalid header hash", err)
 
 	// Set back the originInnerHash
@@ -348,7 +348,7 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 	require.NoError(t, err)
 
 	// A UxOut does not exist, it was already spent
-	err = bc.VerifyTransactionAllConstraints(tx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(tx, DefaultMaxBlockSize)
 	expectedErr := fmt.Errorf("unspent output of %s does not exist", tx.In[0].Hex())
 	require.Equal(t, expectedErr, err)
 
@@ -357,21 +357,21 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 	_, key := cipher.GenerateKeyPair()
 	toAddr2 := testutil.MakeAddress()
 	tx2 := makeSpendTx(t, uxs, []cipher.SecKey{key, key}, toAddr2, 5e6)
-	err = bc.VerifyTransactionAllConstraints(tx2, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(tx2, DefaultMaxBlockSize)
 	requireHardViolation(t, "Signature not valid for output being spent", err)
 
 	// Create lost coin transaction
 	uxs2 := coin.CreateUnspents(b.Head, tx)
 	toAddr3 := testutil.MakeAddress()
 	lostCoinTx := makeLostCoinTx(coin.UxArray{uxs2[1]}, []cipher.SecKey{genSecret}, toAddr3, 10e5)
-	err = bc.VerifyTransactionAllConstraints(lostCoinTx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(lostCoinTx, DefaultMaxBlockSize)
 	requireHardViolation(t, "Transactions may not destroy coins", err)
 
 	// Create transaction with duplicate UxOuts
 	uxs = coin.CreateUnspents(b.Head, tx)
 	toAddr4 := testutil.MakeAddress()
 	dupUxOutTx := makeDuplicateUxOutTx(coin.UxArray{uxs[0]}, []cipher.SecKey{genSecret}, toAddr4, 1e6)
-	err = bc.VerifyTransactionAllConstraints(dupUxOutTx, DefaultMaxBlockSize)
+	err = bc.VerifySingleTxnAllConstraints(dupUxOutTx, DefaultMaxBlockSize)
 	requireHardViolation(t, "Duplicate output in transaction", err)
 }
 
@@ -434,7 +434,7 @@ func testVerifyTransactionAddressLocking(t *testing.T, toAddr string, expectedEr
 	head, err := bc.Head()
 	require.NoError(t, err)
 
-	err = VerifyTransactionSoftConstraints(txn, head.Time(), uxIn, DefaultMaxBlockSize)
+	err = VerifySingleTxnSoftConstraints(txn, head.Time(), uxIn, DefaultMaxBlockSize)
 	if expectedErr == nil {
 		require.NoError(t, err)
 	} else {

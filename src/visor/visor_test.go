@@ -338,8 +338,9 @@ func TestVisorInjectTransaction(t *testing.T) {
 
 	// Create an transaction with valid decimal places
 	txn := makeSpendTx(t, uxs, []cipher.SecKey{genSecret}, genAddress, coins)
-	known, err := v.InjectTransaction(txn)
+	known, softErr, err := v.InjectTransaction(txn)
 	require.False(t, known)
+	require.Nil(t, softErr)
 	require.NoError(t, err)
 
 	// Execute a block to clear this transaction from the pool
@@ -350,27 +351,34 @@ func TestVisorInjectTransaction(t *testing.T) {
 	require.Equal(t, 0, unconfirmed.Len())
 	require.Equal(t, uint64(2), bc.Len())
 
-	// Create a transaction with invalid decimal places
 	uxs = coin.CreateUnspents(sb.Head, sb.Body.Transactions[0])
-
-	invalidCoins := coins + (maxDropletDivisor / 10)
-	txn = makeSpendTx(t, uxs, []cipher.SecKey{genSecret, genSecret}, toAddr, invalidCoins)
-	_, err = v.InjectTransaction(txn)
-	require.IsType(t, ErrTransactionViolatesSoftConstraint{}, err)
-	testutil.RequireError(t, err.(ErrTransactionViolatesSoftConstraint).Err, errInvalidDecimals.Error())
-	require.Equal(t, 0, unconfirmed.Len())
 
 	// Check transactions with overflowing output coins fail
 	txn = makeOverflowCoinsSpendTx(t, coin.UxArray{uxs[0]}, []cipher.SecKey{genSecret}, toAddr)
-	_, err = v.InjectTransaction(txn)
-	require.IsType(t, ErrTransactionViolatesHardConstraint{}, err)
-	testutil.RequireError(t, err.(ErrTransactionViolatesHardConstraint).Err, "Output coins overflow")
+	_, softErr, err = v.InjectTransaction(txn)
+	require.IsType(t, ErrTxnViolatesHardConstraint{}, err)
+	testutil.RequireError(t, err.(ErrTxnViolatesHardConstraint).Err, "Output coins overflow")
+	require.Nil(t, softErr)
+	require.Equal(t, 0, unconfirmed.Len())
 
 	// Check transactions with overflowing output hours fail
+	// It should not be injected; when injecting a txn, the overflowing output hours is treated
+	// as a hard constraint. It is only a soft constraint when the txn is included in a signed block.
 	txn = makeOverflowHoursSpendTx(t, coin.UxArray{uxs[0]}, []cipher.SecKey{genSecret}, toAddr)
-	_, err = v.InjectTransaction(txn)
-	require.IsType(t, ErrTransactionViolatesSoftConstraint{}, err)
-	testutil.RequireError(t, err.(ErrTransactionViolatesSoftConstraint).Err, "Transaction output hours overflow")
+	_, softErr, err = v.InjectTransaction(txn)
+	require.Nil(t, softErr)
+	require.IsType(t, ErrTxnViolatesHardConstraint{}, err)
+	testutil.RequireError(t, err.(ErrTxnViolatesHardConstraint).Err, "Transaction output hours overflow")
+	require.Equal(t, 0, unconfirmed.Len())
+
+	// Create a transaction with invalid decimal places
+	// It's still injected, because this is considered a soft error
+	invalidCoins := coins + (maxDropletDivisor / 10)
+	txn = makeSpendTx(t, uxs, []cipher.SecKey{genSecret, genSecret}, toAddr, invalidCoins)
+	_, softErr, err = v.InjectTransaction(txn)
+	require.NoError(t, err)
+	testutil.RequireError(t, softErr.Err, errInvalidDecimals.Error())
+	require.Equal(t, 1, unconfirmed.Len())
 }
 
 func makeOverflowCoinsSpendTx(t *testing.T, uxs coin.UxArray, keys []cipher.SecKey, toAddr cipher.Address) coin.Transaction {

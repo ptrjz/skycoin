@@ -518,7 +518,7 @@ func TestProcessTransactions(t *testing.T) {
 					Coins:   10e6,
 				},
 			},
-			NewErrTransactionViolatesHardConstraint(errors.New("Signature not valid for output being spent")),
+			NewErrTxnViolatesHardConstraint(errors.New("Signature not valid for output being spent")),
 		},
 		{
 			"dup spending",

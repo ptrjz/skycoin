@@ -353,7 +353,7 @@ func CreateRawTx(c *webrpc.Client, wlt *wallet.Wallet, inAddrs []string, chgAddr
 		return nil, err
 	}
 
-	// TODO -- remove me -- reimplementation of visor.VerifyTransactionSoftConstraints minus
+	// TODO -- remove me -- reimplementation of visor.VerifySingleTxnSoftConstraints minus
 	// the parts that require block head data, which is not available from the RPC API (see below)
 	if err := verifyTransactionConstraints(txn, inUxs, visor.DefaultMaxBlockSize); err != nil {
 		return nil, err
@@ -368,17 +368,17 @@ func CreateRawTx(c *webrpc.Client, wlt *wallet.Wallet, inAddrs []string, chgAddr
 	// This could lead to race conditions; /blockchain/metadata should return the full head, or have an API endpoint
 	// just for the head, and/or include the head block in the get_outputs response
 	// The head block is used for calculating inUxs's coin hours.
-	// if err := visor.VerifyTransactionSoftConstraints(txn, inUxs, visor.DefaultMaxBlockSize); err != nil {
+	// if err := visor.VerifySingleTxnSoftConstraints(txn, inUxs, visor.DefaultMaxBlockSize); err != nil {
 	//     return nil, err
 	// }
-	// if err := visor.VerifyTransactionHardConstraints(txn, head, inUxs); err != nil {
+	// if err := visor.VerifySingleTxnHardConstraints(txn, head, inUxs); err != nil {
 	// 	return nil, err
 	// }
 
 	return txn, nil
 }
 
-// TODO -- remove me -- reimplementation of visor.VerifyTransactionSoftConstraints and HardConstraints
+// TODO -- remove me -- reimplementation of visor.VerifySingleTxnSoftConstraints and HardConstraints
 // minus the parts that require block head data, which is not available from the RPC API (see below)
 func verifyTransactionConstraints(txn *coin.Transaction, uxIn coin.UxArray, maxSize int) error {
 	// SOFT constraints:
@@ -398,15 +398,6 @@ func verifyTransactionConstraints(txn *coin.Transaction, uxIn coin.UxArray, maxS
 		}
 	}
 
-	// Verify CoinHours do not overflow
-	// NOTE: This would be in the hard constraints, but a bug caused overflowing
-	// coinhour transactions to be published. To avoid breaking the blockchain
-	// sync, the rules are applied here.
-	// If/when the blockchain is upgraded/reset, move this to the hard constraints.
-	if _, err := txn.OutputHours(); err != nil {
-		return err
-	}
-
 	// HARD constraints:
 
 	if err := txn.Verify(); err != nil {
@@ -416,6 +407,11 @@ func verifyTransactionConstraints(txn *coin.Transaction, uxIn coin.UxArray, maxS
 	// Checks whether ux inputs exist,
 	// Check that signatures are allowed to spend inputs
 	if err := txn.VerifyInput(uxIn); err != nil {
+		return err
+	}
+
+	// Verify CoinHours do not overflow
+	if _, err := txn.OutputHours(); err != nil {
 		return err
 	}
 
