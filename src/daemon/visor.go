@@ -814,15 +814,15 @@ func (gtm *GiveTxnsMessage) Process(d *Daemon) {
 		if err != nil {
 			logger.Warning("Failed to record transaction %s: %v", txn.Hash().Hex(), err)
 			continue
-		}
-
-		if known {
-			logger.Warning("Duplicate Transaction: %s", txn.Hash().Hex())
 		} else if softErr != nil {
 			logger.Warning("Transaction soft violation: %v", err)
-		} else {
-			hashes = append(hashes, txn.Hash())
+			continue
+		} else if known {
+			logger.Warning("Duplicate Transaction: %s", txn.Hash().Hex())
+			continue
 		}
+
+		hashes = append(hashes, txn.Hash())
 	}
 
 	// Announce these transactions to peers
