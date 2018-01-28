@@ -1139,8 +1139,14 @@ func (vs Visor) GetBalanceOfAddrs(addrs []cipher.Address) ([]wallet.BalancePair,
 		}
 
 		bp := wallet.BalancePair{
-			Confirmed: wallet.Balance{Coins: coins, Hours: coinHours},
-			Predicted: wallet.Balance{Coins: pcoins, Hours: pcoinHours},
+			Confirmed: wallet.Balance{
+				Coins: coins,
+				Hours: coinHours,
+			},
+			Predicted: wallet.Balance{
+				Coins: pcoins,
+				Hours: pcoinHours,
+			},
 		}
 
 		bps = append(bps, bp)
