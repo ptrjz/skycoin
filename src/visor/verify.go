@@ -66,6 +66,11 @@ since data from the blockchain and unspent output set are required to fully vali
 
 */
 
+var (
+	errTxnExceedsMaxBlockSize = errors.New("Transaction size bigger than max block size")
+	errTxnIsLocked            = errors.New("Transaction has locked address inputs")
+)
+
 // ErrTxnViolatesHardConstraint is returned when a transaction violates hard constraints
 type ErrTxnViolatesHardConstraint struct {
 	Err error
@@ -124,7 +129,7 @@ func VerifySingleTxnSoftConstraints(txn coin.Transaction, headTime uint64, uxIn 
 
 func verifyTxnSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.UxArray, maxSize int) error {
 	if txn.Size() > maxSize {
-		return errors.New("Transaction size bigger than max block size")
+		return errTxnExceedsMaxBlockSize
 	}
 
 	f, err := fee.TransactionFee(&txn, headTime, uxIn)
@@ -137,7 +142,7 @@ func verifyTxnSoftConstraints(txn coin.Transaction, headTime uint64, uxIn coin.U
 	}
 
 	if TransactionIsLocked(uxIn) {
-		return errors.New("Transaction has locked address inputs")
+		return errTxnIsLocked
 	}
 
 	// Reject transactions that do not conform to decimal restrictions

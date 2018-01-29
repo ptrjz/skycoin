@@ -422,9 +422,9 @@ func (m *UnconfirmedTxnPoolerMock) SpendsOfAddresses(p0 []cipher.Address, p1 blo
 }
 
 // InjectTransaction mocked method
-func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Transaction) (bool, error) {
+func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Transaction, p2 int) (bool, error) {
 
-	ret := m.Called(p0, p1)
+	ret := m.Called(p0, p1, p2)
 
 	var r0 bool
 	switch res := ret.Get(0).(type) {

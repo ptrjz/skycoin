@@ -206,7 +206,7 @@ type Blockchainer interface {
 // accessing the unconfirmed transaction pool
 type UnconfirmedTxnPooler interface {
 	SetAnnounced(hash cipher.SHA256, t time.Time) error
-	InjectTransaction(bc Blockchainer, t coin.Transaction) (bool, error)
+	InjectTransaction(bc Blockchainer, t coin.Transaction, maxSize int) (bool, error)
 	RawTxns() coin.Transactions
 	RemoveTransactions(txns []cipher.SHA256) error
 	RemoveTransactionsWithTx(tx *bolt.Tx, txns []cipher.SHA256)
@@ -566,7 +566,7 @@ func (vs *Visor) GetBlocks(start, end uint64) []coin.SignedBlock {
 // If the transaction violates hard constraints, it is rejected, and error will not be nil.
 // If the transaction only violates soft constraints, it is still injected, and the soft constraint violation is returned.
 func (vs *Visor) InjectTransaction(txn coin.Transaction) (bool, *ErrTxnViolatesSoftConstraint, error) {
-	// NOTE: Only hard constraints are checked here,
+	// NOTE: Only hard constraints prevent injection to the unconfirmed pool,
 	//       but if it violates soft constraints it should not be propagated
 	var softErr *ErrTxnViolatesSoftConstraint
 	if err := vs.Blockchain.VerifySingleTxnAllConstraints(txn, vs.Config.MaxBlockSize); err != nil {
@@ -583,7 +583,7 @@ func (vs *Visor) InjectTransaction(txn coin.Transaction) (bool, *ErrTxnViolatesS
 		}
 	}
 
-	known, err := vs.Unconfirmed.InjectTransaction(vs.Blockchain, txn)
+	known, err := vs.Unconfirmed.InjectTransaction(vs.Blockchain, txn, vs.Config.MaxBlockSize)
 	return known, softErr, err
 }
 
@@ -596,7 +596,7 @@ func (vs *Visor) InjectTransactionStrict(txn coin.Transaction) (bool, error) {
 		return false, err
 	}
 
-	return vs.Unconfirmed.InjectTransaction(vs.Blockchain, txn)
+	return vs.Unconfirmed.InjectTransaction(vs.Blockchain, txn, vs.Config.MaxBlockSize)
 }
 
 // GetAddressTxns returns the Transactions whose unspents give coins to a cipher.Address.
