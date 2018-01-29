@@ -288,7 +288,7 @@ func (vs *Visor) Run() error {
 		return err
 	}
 
-	removed, err := vs.RefreshUnconfirmed()
+	removed, err := vs.RemoveInvalidUnconfirmed()
 	if err != nil {
 		return err
 	}
