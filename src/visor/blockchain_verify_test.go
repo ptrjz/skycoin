@@ -349,7 +349,7 @@ func TestVerifyTransactionAllConstraints(t *testing.T) {
 
 	// A UxOut does not exist, it was already spent
 	err = bc.VerifySingleTxnAllConstraints(tx, DefaultMaxBlockSize)
-	expectedErr := fmt.Errorf("unspent output of %s does not exist", tx.In[0].Hex())
+	expectedErr := NewErrTxnViolatesHardConstraint(blockdb.NewErrUnspentNotExist(tx.In[0].Hex()))
 	require.Equal(t, expectedErr, err)
 
 	// Check invalid sig

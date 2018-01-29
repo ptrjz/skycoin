@@ -689,11 +689,8 @@ func TestProcessBlockWIthTx(t *testing.T) {
 	}
 
 	// test with empty blockchain
-	db.Update(func(tx *bolt.Tx) error {
-		_, err := bc.processBlockWithTx(tx, sb)
-		require.NoError(t, err)
-		return nil
-	})
+	_, err = bc.processBlock(sb)
+	require.NoError(t, err)
 
 	// Add genesis block to chain store
 	db.Update(func(tx *bolt.Tx) error {
@@ -710,14 +707,11 @@ func TestProcessBlockWIthTx(t *testing.T) {
 	b, err := coin.NewBlock(*gb, genTime+100, uxhash, coin.Transactions{tx}, feeCalc)
 	require.NoError(t, err)
 
-	db.Update(func(tx *bolt.Tx) error {
-		_, err := bc.processBlockWithTx(tx, coin.SignedBlock{
-			Block: *b,
-			Sig:   cipher.SignHash(b.HashHeader(), genSecret),
-		})
-		require.NoError(t, err)
-		return nil
+	_, err = bc.processBlock(coin.SignedBlock{
+		Block: *b,
+		Sig:   cipher.SignHash(b.HashHeader(), genSecret),
 	})
+	require.NoError(t, err)
 
 }
 

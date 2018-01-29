@@ -124,7 +124,7 @@ func (bc *Blockchain) GetBlockBySeq(seq uint64) (*coin.SignedBlock, error) {
 	return bc.store.GetBlockBySeq(seq)
 }
 
-func (bc *Blockchain) processBlockWithTx(tx *bolt.Tx, b coin.SignedBlock) (coin.SignedBlock, error) {
+func (bc *Blockchain) processBlock(b coin.SignedBlock) (coin.SignedBlock, error) {
 	if bc.Len() > 0 {
 		if !bc.isGenesisBlock(b.Block) {
 			if err := bc.verifyBlockHeader(b.Block); err != nil {
@@ -231,7 +231,8 @@ func (bc *Blockchain) ExecuteBlockWithTx(tx *bolt.Tx, sb *coin.SignedBlock) erro
 
 		sb.Head.PrevHash = head.HashHeader()
 	}
-	nb, err := bc.processBlockWithTx(tx, *sb)
+
+	nb, err := bc.processBlock(*sb)
 	if err != nil {
 		return err
 	}
@@ -271,7 +272,12 @@ func (bc Blockchain) VerifyBlockTxnConstraints(tx coin.Transaction) error {
 	// This prevents double spends
 	uxIn, err := bc.Unspent().GetArray(tx.In)
 	if err != nil {
-		return err
+		switch err.(type) {
+		case blockdb.ErrUnspentNotExist:
+			return NewErrTxnViolatesHardConstraint(err)
+		default:
+			return err
+		}
 	}
 
 	head, err := bc.Head()
@@ -313,7 +319,12 @@ func (bc Blockchain) VerifySingleTxnHardConstraints(tx coin.Transaction) error {
 	// This prevents double spends
 	uxIn, err := bc.Unspent().GetArray(tx.In)
 	if err != nil {
-		return err
+		switch err.(type) {
+		case blockdb.ErrUnspentNotExist:
+			return NewErrTxnViolatesHardConstraint(err)
+		default:
+			return err
+		}
 	}
 
 	head, err := bc.Head()
@@ -332,7 +343,7 @@ func (bc Blockchain) VerifySingleTxnAllConstraints(tx coin.Transaction, maxSize 
 	// This prevents double spends
 	uxIn, err := bc.Unspent().GetArray(tx.In)
 	if err != nil {
-		return err
+		return NewErrTxnViolatesHardConstraint(err)
 	}
 
 	head, err := bc.Head()

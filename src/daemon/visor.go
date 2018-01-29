@@ -129,14 +129,32 @@ func (vs *Visor) strand(name string, f func() error) error {
 	return strand.Strand(logger, vs.reqC, name, f)
 }
 
-// RefreshUnconfirmed checks unconfirmed txns against the blockchain and purges ones too old
-func (vs *Visor) RefreshUnconfirmed() []cipher.SHA256 {
+// RefreshUnconfirmed checks unconfirmed txns against the blockchain and marks
+// and returns those that become valid
+func (vs *Visor) RefreshUnconfirmed() ([]cipher.SHA256, error) {
 	var hashes []cipher.SHA256
-	vs.strand("RefreshUnconfirmed", func() error {
-		hashes = vs.v.RefreshUnconfirmed()
-		return nil
-	})
-	return hashes
+	if err := vs.strand("RefreshUnconfirmed", func() error {
+		var err error
+		hashes, err = vs.v.RefreshUnconfirmed()
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return hashes, nil
+}
+
+// RemoveInvalidUnconfirmed checks unconfirmed txns against the blockchain and
+// purges those that become permanently invalid, violating hard constraints
+func (vs *Visor) RemoveInvalidUnconfirmed() ([]cipher.SHA256, error) {
+	var hashes []cipher.SHA256
+	if err := vs.strand("RemoveInvalidUnconfirmed", func() error {
+		var err error
+		hashes, err = vs.v.RemoveInvalidUnconfirmed()
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return hashes, nil
 }
 
 // RequestBlocks Sends a GetBlocksMessage to all connections

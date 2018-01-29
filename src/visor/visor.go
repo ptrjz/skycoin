@@ -94,8 +94,10 @@ type Config struct {
 	UnconfirmedCheckInterval time.Duration
 	// How long we'll hold onto an unconfirmed txn
 	UnconfirmedMaxAge time.Duration
-	// How often to refresh the unconfirmed pool
+	// How often to check the unconfirmed pool for transactions that become valid
 	UnconfirmedRefreshRate time.Duration
+	// How often to remove transactions that become permanently invalid from the unconfirmed pool
+	UnconfirmedRemoveInvalidRate time.Duration
 	// How often to rebroadcast unconfirmed transactions
 	UnconfirmedResendPeriod time.Duration
 	// Maximum size of a block, in bytes.
@@ -137,12 +139,12 @@ func NewVisorConfig() Config {
 		BlockCreationInterval: 10,
 		//BlockCreationForceInterval: 120, //create block if no block within this many seconds
 
-		UnconfirmedCheckInterval: time.Hour * 2,
-		UnconfirmedMaxAge:        time.Hour * 48,
-		UnconfirmedRefreshRate:   time.Minute,
-		// UnconfirmedRefreshRate:   time.Minute * 30,
-		UnconfirmedResendPeriod: time.Minute,
-		MaxBlockSize:            DefaultMaxBlockSize,
+		UnconfirmedCheckInterval:     time.Hour * 2,
+		UnconfirmedMaxAge:            time.Hour * 48,
+		UnconfirmedRefreshRate:       time.Minute,
+		UnconfirmedRemoveInvalidRate: time.Minute,
+		UnconfirmedResendPeriod:      time.Minute,
+		MaxBlockSize:                 DefaultMaxBlockSize,
 
 		GenesisAddress:    cipher.Address{},
 		GenesisSignature:  cipher.Sig{},
@@ -208,7 +210,8 @@ type UnconfirmedTxnPooler interface {
 	RawTxns() coin.Transactions
 	RemoveTransactions(txns []cipher.SHA256) error
 	RemoveTransactionsWithTx(tx *bolt.Tx, txns []cipher.SHA256)
-	Refresh(bc Blockchainer, maxBlockSize int) []cipher.SHA256
+	Refresh(bc Blockchainer, maxBlockSize int) ([]cipher.SHA256, error)
+	RemoveInvalid(bc Blockchainer) ([]cipher.SHA256, error)
 	FilterKnown(txns []cipher.SHA256) []cipher.SHA256
 	GetKnown(txns []cipher.SHA256) coin.Transactions
 	RecvOfAddresses(bh coin.BlockHeader, addrs []cipher.Address) (coin.AddressUxOuts, error)
@@ -285,9 +288,11 @@ func (vs *Visor) Run() error {
 		return err
 	}
 
-	if err := vs.processUnconfirmedTxns(); err != nil {
+	removed, err := vs.RefreshUnconfirmed()
+	if err != nil {
 		return err
 	}
+	logger.Info("Removed %d invalid txns from pool", len(removed))
 
 	return vs.bcParser.Run()
 }
@@ -331,31 +336,6 @@ func (vs *Visor) maybeCreateGenesisBlock() error {
 	return vs.ExecuteSignedBlock(sb)
 }
 
-// processUnconfirmedTxns checks if there are unconfirmed transactions that are
-// already executed or now invalid, and removes them
-// TODO -- should this be merged with RefreshUnconfirmed?
-func (vs *Visor) processUnconfirmedTxns() error {
-	var removeTxs []cipher.SHA256
-	if err := vs.Unconfirmed.ForEach(func(hash cipher.SHA256, tx *UnconfirmedTxn) error {
-		if err := vs.Blockchain.VerifySingleTxnHardConstraints(tx.Txn); err != nil {
-			removeTxs = append(removeTxs, hash)
-		} else {
-			// Check if the tx already executed
-			if txn, err := vs.history.GetTransaction(hash); err != nil {
-				return fmt.Errorf("process unconfirmed txs failed: %v", err)
-			} else if txn != nil {
-				removeTxs = append(removeTxs, hash)
-			}
-		}
-
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	return vs.Unconfirmed.RemoveTransactions(removeTxs)
-}
-
 // GenesisPreconditions panics if conditions for genesis block are not met
 func (vs *Visor) GenesisPreconditions() {
 	if vs.Config.BlockchainSeckey != (cipher.SecKey{}) {
@@ -367,8 +347,15 @@ func (vs *Visor) GenesisPreconditions() {
 
 // RefreshUnconfirmed checks unconfirmed txns against the blockchain and returns
 // all transaction that turn to valid.
-func (vs *Visor) RefreshUnconfirmed() []cipher.SHA256 {
+func (vs *Visor) RefreshUnconfirmed() ([]cipher.SHA256, error) {
 	return vs.Unconfirmed.Refresh(vs.Blockchain, vs.Config.MaxBlockSize)
+}
+
+// RemoveInvalidUnconfirmed removes transactions that become permanently invalid
+// (by violating hard constraints) from the pool.
+// Returns the transaction hashes that were removed.
+func (vs *Visor) RemoveInvalidUnconfirmed() ([]cipher.SHA256, error) {
+	return vs.Unconfirmed.RemoveInvalid(vs.Blockchain)
 }
 
 // CreateBlock creates a SignedBlock from pending transactions

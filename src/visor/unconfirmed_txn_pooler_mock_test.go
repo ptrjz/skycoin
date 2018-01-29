@@ -298,7 +298,7 @@ func (m *UnconfirmedTxnPoolerMock) RecvOfAddresses(p0 coin.BlockHeader, p1 []cip
 }
 
 // Refresh mocked method
-func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer, p1 int) []cipher.SHA256 {
+func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer, p1 int) ([]cipher.SHA256, error) {
 
 	ret := m.Called(p0, p1)
 
@@ -311,7 +311,43 @@ func (m *UnconfirmedTxnPoolerMock) Refresh(p0 Blockchainer, p1 int) []cipher.SHA
 		panic(fmt.Sprintf("unexpected type: %v", res))
 	}
 
-	return r0
+	var r1 error
+	switch res := ret.Get(1).(type) {
+	case nil:
+	case error:
+		r1 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0, r1
+
+}
+
+// RemoveInvalid mocked method
+func (m *UnconfirmedTxnPoolerMock) RemoveInvalid(p0 Blockchainer) ([]cipher.SHA256, error) {
+
+	ret := m.Called(p0)
+
+	var r0 []cipher.SHA256
+	switch res := ret.Get(0).(type) {
+	case nil:
+	case []cipher.SHA256:
+		r0 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	var r1 error
+	switch res := ret.Get(1).(type) {
+	case nil:
+	case error:
+		r1 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0, r1
 
 }
 
