@@ -422,7 +422,7 @@ func (m *UnconfirmedTxnPoolerMock) SpendsOfAddresses(p0 []cipher.Address, p1 blo
 }
 
 // InjectTransaction mocked method
-func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Transaction, p2 int) (bool, error) {
+func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Transaction, p2 int) (bool, *ErrTxnViolatesSoftConstraint, error) {
 
 	ret := m.Called(p0, p1, p2)
 
@@ -435,15 +435,24 @@ func (m *UnconfirmedTxnPoolerMock) InjectTransaction(p0 Blockchainer, p1 coin.Tr
 		panic(fmt.Sprintf("unexpected type: %v", res))
 	}
 
-	var r1 error
+	var r1 *ErrTxnViolatesSoftConstraint
 	switch res := ret.Get(1).(type) {
 	case nil:
-	case error:
+	case *ErrTxnViolatesSoftConstraint:
 		r1 = res
 	default:
 		panic(fmt.Sprintf("unexpected type: %v", res))
 	}
 
-	return r0, r1
+	var r2 error
+	switch res := ret.Get(2).(type) {
+	case nil:
+	case error:
+		r2 = res
+	default:
+		panic(fmt.Sprintf("unexpected type: %v", res))
+	}
+
+	return r0, r1, r2
 
 }

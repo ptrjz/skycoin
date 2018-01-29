@@ -278,18 +278,22 @@ func (utp *UnconfirmedTxnPool) createUnconfirmedTxn(t coin.Transaction) Unconfir
 // InjectTransaction adds a coin.Transaction to the pool, or updates an existing one's timestamps
 // Returns an error if txn is invalid, and whether the transaction already
 // existed in the pool.
-// If the transaction violates hard constraints, it is rejected. Soft constraints are ignored.
-func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transaction, maxSize int) (bool, error) {
+// If the transaction violates hard constraints, it is rejected.
+// Soft constraints violations mark a txn as invalid, but the txn is inserted. The soft violation is returned.
+func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transaction, maxSize int) (bool, *ErrTxnViolatesSoftConstraint, error) {
 	var isValid int8 = 1
+	var softErr *ErrTxnViolatesSoftConstraint
 	if err := bc.VerifySingleTxnAllConstraints(t, maxSize); err != nil {
 		logger.Warning("bc.VerifySingleTxnAllConstraints failed for txn %s: %v", t.TxIDHex(), err)
 		switch err.(type) {
 		case ErrTxnViolatesSoftConstraint:
+			e := err.(ErrTxnViolatesSoftConstraint)
+			softErr = &e
 			isValid = 0
 		case ErrTxnViolatesHardConstraint:
-			return false, err
+			return false, nil, err
 		default:
-			return false, err
+			return false, nil, err
 		}
 	}
 
@@ -305,7 +309,7 @@ func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transac
 	})
 
 	if known {
-		return true, nil
+		return true, softErr, nil
 	}
 
 	utx := utp.createUnconfirmedTxn(t)
@@ -325,10 +329,10 @@ func (utp *UnconfirmedTxnPool) InjectTransaction(bc Blockchainer, t coin.Transac
 
 		return utp.unspent.putWithTx(tx, h, coin.CreateUnspents(head.Head, t))
 	}); err != nil {
-		return false, err
+		return false, nil, err
 	}
 
-	return false, nil
+	return false, softErr, nil
 }
 
 // RawTxns returns underlying coin.Transactions

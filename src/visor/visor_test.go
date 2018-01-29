@@ -187,8 +187,9 @@ func TestVisorCreateBlock(t *testing.T) {
 
 	nUnspents := 100
 	txn := makeUnspentsTx(t, uxs, []cipher.SecKey{genSecret}, genAddress, nUnspents, maxDropletDivisor)
-	known, err := unconfirmed.InjectTransaction(bc, txn, v.Config.MaxBlockSize)
+	known, softErr, err := unconfirmed.InjectTransaction(bc, txn, v.Config.MaxBlockSize)
 	require.False(t, known)
+	require.Nil(t, softErr)
 	require.NoError(t, err)
 
 	v.Config.MaxBlockSize = txn.Size()
@@ -255,7 +256,7 @@ func TestVisorCreateBlock(t *testing.T) {
 
 	// Inject transactions into the unconfirmed pool
 	for _, txn := range txns {
-		known, err := unconfirmed.InjectTransaction(bc, txn, v.Config.MaxBlockSize)
+		known, _, err := unconfirmed.InjectTransaction(bc, txn, v.Config.MaxBlockSize)
 		require.False(t, known)
 		require.NoError(t, err)
 	}
